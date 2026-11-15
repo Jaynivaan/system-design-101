@@ -45,13 +45,14 @@ for _ in $(seq 1 40); do
 done
 curl -fsS "http://localhost:$PORT/health/ready" >/dev/null || { echo; echo "Not healthy yet. Check: $CLI logs $NAME"; exit 1; }
 
-ADMIN_KEY=$(grep '^Harness__AdminKey=' "$ENV_FILE" | cut -d= -f2-)
 cat <<MSG
 
 Agency Harness is running at http://localhost:$PORT  (MCP: http://localhost:$PORT/mcp)
+Dashboard: open that address in a browser and sign in with your agency's API key.
 
-Create your agency's API key (shown once, save it):
-  curl -s -X POST http://localhost:$PORT/admin/tenants -H "X-Admin-Key: $ADMIN_KEY" \\
+Create your agency's API key (shown once, save it). Your admin key is the Harness__AdminKey line in $ENV_FILE:
+  ADMIN_KEY=\$(grep '^Harness__AdminKey=' $ENV_FILE | cut -d= -f2-)
+  curl -s -X POST http://localhost:$PORT/admin/tenants -H "X-Admin-Key: \$ADMIN_KEY" \\
        -H 'Content-Type: application/json' -d '{"name":"My Agency"}'
 
 Logs:   $CLI logs -f $NAME

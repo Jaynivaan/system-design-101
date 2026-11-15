@@ -25,15 +25,6 @@ if (-not (Test-Path $EnvFile)) {
   Write-Host "Created $EnvFile with a new admin key."
 }
 
-# 2. Build the image.
-if (-not $SkipBuild) { Write-Host "Building $Image..."; & $Cli build -t $Image . ; if ($LASTEXITCODE) { throw "Build failed." } }
-
-# 3. (Re)start the container. Data stays in the named volume.
-& $Cli volume inspect agency-harness-data *> $null; if ($LASTEXITCODE) { & $Cli volume create agency-harness-data | Out-Null }
-& $Cli rm -f $Name *> $null
-& $Cli run -d --name $Name --restart=unless-stopped -p "${Port}:8080" -v agency-harness-data:/data --env-file $EnvFile $Image | Out-Null
-if ($LASTEXITCODE) { throw "Could not start the container." }
-
 function Test-Ready([string]$hostName) {
   try { Invoke-RestMethod -TimeoutSec 3 "http://${hostName}:$Port/health/ready" | Out-Null; return $true } catch { return $false }
 }
@@ -46,6 +37,38 @@ function Get-MachineIp {
   } catch {}
   return $null
 }
+
+function Connect-PodmanMachine {
+  # Make sure the podman CLI can reach its machine. On some Windows setups (WSL with
+  # localhostForwarding=false) the CLI's ssh connection to 127.0.0.1 never works, so we point it
+  # at the machine's WSL address instead, reusing the port, user, socket and key it already has.
+  & $Cli info *> $null; if ($LASTEXITCODE -eq 0) { return }
+  Write-Host "Podman isn't answering; starting its machine..."
+  & $Cli machine start $MachineName *> $null
+  & $Cli info *> $null; if ($LASTEXITCODE -eq 0) { return }
+  $ip = Get-MachineIp
+  if (-not $ip) { throw "Podman can't reach its machine and its WSL address wasn't found. Try: $Cli machine start" }
+  try { $conns = & $Cli system connection list --format json | ConvertFrom-Json } catch { $conns = @() }
+  $c = @($conns | Where-Object { $_.Default }) + @($conns) | Select-Object -First 1
+  if (-not $c -or -not $c.URI) { throw "Podman can't reach its machine, and no connection details were found. See docs/HOSTING.md (Troubleshooting)." }
+  $u = [Uri]$c.URI
+  $env:CONTAINER_HOST = "ssh://$($u.UserInfo)@${ip}:$($u.Port)$($u.AbsolutePath)"
+  if ($c.Identity) { $env:CONTAINER_SSHKEY = $c.Identity }
+  & $Cli info *> $null
+  if ($LASTEXITCODE) { throw "Podman still can't reach its machine at $ip. See docs/HOSTING.md (Troubleshooting)." }
+  Write-Host "Connected to the Podman machine at $ip (localhost forwarding is off on this PC)."
+}
+
+Connect-PodmanMachine
+
+# 2. Build the image.
+if (-not $SkipBuild) { Write-Host "Building $Image..."; & $Cli build -t $Image . ; if ($LASTEXITCODE) { throw "Build failed." } }
+
+# 3. (Re)start the container. Data stays in the named volume.
+& $Cli volume inspect agency-harness-data *> $null; if ($LASTEXITCODE) { & $Cli volume create agency-harness-data | Out-Null }
+& $Cli rm -f $Name *> $null
+& $Cli run -d --name $Name --restart=unless-stopped -p "${Port}:8080" -v agency-harness-data:/data --env-file $EnvFile $Image | Out-Null
+if ($LASTEXITCODE) { throw "Could not start the container." }
 
 Write-Host -NoNewline "Starting"
 $ready = $false
@@ -62,13 +85,14 @@ if (-not $ready) { Write-Host ""; throw "Not healthy yet. Check: $Cli logs $Name
 Write-Host " ready."
 if ($HostAddress -ne "localhost") { Write-Host "Note: reached through $HostAddress. This address can change when WSL restarts." }
 
-$adminKey = ((Get-Content $EnvFile | Where-Object { $_ -like "Harness__AdminKey=*" }) -split "=", 2)[1]
 Write-Host @"
 
 Agency Harness is running at http://${HostAddress}:$Port  (MCP: http://${HostAddress}:$Port/mcp)
+Dashboard: open that address in a browser and sign in with your agency's API key.
 
-Create your agency's API key (shown once, save it):
-  Invoke-RestMethod -Method Post http://${HostAddress}:$Port/admin/tenants -Headers @{ 'X-Admin-Key' = '$adminKey' } -ContentType 'application/json' -Body '{"name":"My Agency"}'
+Create your agency's API key (shown once, save it). Your admin key is the Harness__AdminKey line in $EnvFile:
+  `$admin = ((Get-Content $EnvFile | Where-Object { `$_ -like 'Harness__AdminKey=*' }) -split '=', 2)[1]
+  Invoke-RestMethod -Method Post http://${HostAddress}:$Port/admin/tenants -Headers @{ 'X-Admin-Key' = `$admin } -ContentType 'application/json' -Body '{"name":"My Agency"}'
 
 Logs:   $Cli logs -f $Name
 Stop:   $Cli stop $Name
