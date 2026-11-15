@@ -61,6 +61,11 @@ curl -s $B/v1/projects/<projectId>/deliverables -H "X-Api-Key: $K"
 curl -s $B/v1/events -H "X-Api-Key: $K"
 ```
 
+## Host it
+
+To run it on your PC with Podman, run `.\scripts\host.ps1` on Windows or `./scripts/host.sh` on macOS/Linux.
+To give it a public HTTPS address, add `-Tunnel` or `--tunnel`. Full guide: **[docs/HOSTING.md](docs/HOSTING.md)**.
+
 ## Use it from OpenCode, Claude Code, Cursor and other apps
 
 The harness is also an MCP server at `/mcp`, so coding agents can queue work, check jobs and pull
