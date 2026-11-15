@@ -9,6 +9,20 @@ using Microsoft.EntityFrameworkCore;
 var builder = WebApplication.CreateBuilder(args);
 var cfg = builder.Configuration;
 
+// Hosting platforms (Render, Railway, Cloud Run, Heroku-style) tell the app which port to use.
+if (Environment.GetEnvironmentVariable("PORT") is { Length: > 0 } port)
+    builder.WebHost.UseUrls($"http://+:{port}");
+
+// Behind a TLS-terminating proxy or load balancer, trust X-Forwarded-For / X-Forwarded-Proto
+// so logs show the real client and the app knows the original request was HTTPS.
+builder.Services.Configure<Microsoft.AspNetCore.Builder.ForwardedHeadersOptions>(o =>
+{
+    o.ForwardedHeaders = Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedFor
+                         | Microsoft.AspNetCore.HttpOverrides.ForwardedHeaders.XForwardedProto;
+    o.KnownNetworks.Clear();   // the platform's proxy addresses aren't known in advance
+    o.KnownProxies.Clear();
+});
+
 // ---------- Persistence ----------
 builder.Services.AddDbContext<HarnessDbContext>(o =>
     o.UseSqlite(cfg.GetConnectionString("Harness") ?? "Data Source=harness.db"));
@@ -102,7 +116,12 @@ using (var scope = app.Services.CreateScope())
 
 app.Logger.LogInformation("Agent runner: {Runner}", useClaude ? $"Claude ({claudeOptions.Model})" : "scripted (set ANTHROPIC_API_KEY for Claude)");
 
+app.UseForwardedHeaders();
 app.UseExceptionHandler();
+
+if (app.Environment.IsProduction() && string.IsNullOrEmpty(cfg["Harness:AdminKey"]))
+    app.Logger.LogWarning("Harness:AdminKey is not set, so /admin/tenants is disabled. Set Harness__AdminKey to create tenants.");
+app.MapGet("/", () => Results.Ok(new { name = "Agency Harness", docs = "https://github.com/jaynivaan/system-design-101/tree/claude/system-design-agency-nuwwik/agency-harness", health = "/health/ready", mcp = "/mcp", api = "/v1" }));
 app.UseCorrelationId();
 app.UseTenantAuth();
 app.UseRateLimiter();
