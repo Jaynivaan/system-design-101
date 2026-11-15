@@ -1,7 +1,11 @@
 # Build and run the Agency Harness with Podman on Windows (PowerShell).
 # Usage:  .\scripts\host.ps1            build + (re)start on http://localhost:8080
 #         .\scripts\host.ps1 -Tunnel    ...and open a public HTTPS address with Cloudflare
-param([switch]$Tunnel, [switch]$SkipBuild, [int]$Port = 8080, [string]$Cli = "podman", [string]$Image = "agency-harness:latest")
+#         .\scripts\host.ps1 -HostAddress 172.20.1.5   if the app isn't reachable on localhost
+# If localhost doesn't answer (e.g. WSL with localhostForwarding=false), the script finds the
+# Podman machine's WSL IP address and uses that for the health check and the tunnel.
+param([switch]$Tunnel, [switch]$SkipBuild, [int]$Port = 8080, [string]$Cli = "podman", [string]$Image = "agency-harness:latest",
+      [string]$HostAddress = "localhost", [string]$MachineName = "podman-machine-default")
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $Name = "agency-harness"; $EnvFile = "harness.env"
@@ -30,21 +34,41 @@ if (-not $SkipBuild) { Write-Host "Building $Image..."; & $Cli build -t $Image .
 & $Cli run -d --name $Name --restart=unless-stopped -p "${Port}:8080" -v agency-harness-data:/data --env-file $EnvFile $Image | Out-Null
 if ($LASTEXITCODE) { throw "Could not start the container." }
 
+function Test-Ready([string]$hostName) {
+  try { Invoke-RestMethod -TimeoutSec 3 "http://${hostName}:$Port/health/ready" | Out-Null; return $true } catch { return $false }
+}
+function Get-MachineIp {
+  # The Podman machine is a WSL distro; its eth0 address is reachable from Windows even when
+  # localhost forwarding is turned off.
+  try {
+    $line = wsl -d $MachineName -- ip -4 -o addr show eth0 2>$null
+    if ($line -match 'inet (\d+\.\d+\.\d+\.\d+)') { return $Matches[1] }
+  } catch {}
+  return $null
+}
+
 Write-Host -NoNewline "Starting"
 $ready = $false
 for ($i = 0; $i -lt 40; $i++) {
-  try { Invoke-RestMethod "http://localhost:$Port/health/ready" | Out-Null; $ready = $true; break } catch { Write-Host -NoNewline "."; Start-Sleep 1 }
+  if (Test-Ready $HostAddress) { $ready = $true; break }
+  # After a few tries on localhost, try the Podman machine's own address.
+  if ($i -eq 8 -and $HostAddress -eq "localhost") {
+    $ip = Get-MachineIp
+    if ($ip) { Write-Host -NoNewline " (localhost not answering, trying $ip)"; $HostAddress = $ip }
+  }
+  Write-Host -NoNewline "."; Start-Sleep 1
 }
-if (-not $ready) { Write-Host ""; throw "Not healthy yet. Check: $Cli logs $Name" }
+if (-not $ready) { Write-Host ""; throw "Not healthy yet. Check: $Cli logs $Name   (if localhost isn't forwarded, pass -HostAddress <Podman machine IP>)" }
 Write-Host " ready."
+if ($HostAddress -ne "localhost") { Write-Host "Note: reached through $HostAddress. This address can change when WSL restarts." }
 
 $adminKey = ((Get-Content $EnvFile | Where-Object { $_ -like "Harness__AdminKey=*" }) -split "=", 2)[1]
 Write-Host @"
 
-Agency Harness is running at http://localhost:$Port  (MCP: http://localhost:$Port/mcp)
+Agency Harness is running at http://${HostAddress}:$Port  (MCP: http://${HostAddress}:$Port/mcp)
 
 Create your agency's API key (shown once, save it):
-  Invoke-RestMethod -Method Post http://localhost:$Port/admin/tenants -Headers @{ 'X-Admin-Key' = '$adminKey' } -ContentType 'application/json' -Body '{"name":"My Agency"}'
+  Invoke-RestMethod -Method Post http://${HostAddress}:$Port/admin/tenants -Headers @{ 'X-Admin-Key' = '$adminKey' } -ContentType 'application/json' -Body '{"name":"My Agency"}'
 
 Logs:   $Cli logs -f $Name
 Stop:   $Cli stop $Name
@@ -54,5 +78,5 @@ Stop:   $Cli stop $Name
 if ($Tunnel) {
   if (-not (Get-Command cloudflared -ErrorAction SilentlyContinue)) { throw "Install cloudflared first: winget install --id Cloudflare.cloudflared" }
   Write-Host "`nOpening a public tunnel. Look for the https://....trycloudflare.com address below. Ctrl+C closes it."
-  cloudflared tunnel --url "http://localhost:$Port"
+  cloudflared tunnel --url "http://${HostAddress}:$Port"
 }

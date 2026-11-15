@@ -79,5 +79,6 @@ a hostname such as `harness.yourdomain.com` at `http://localhost:8080`.
 |---|---|
 | `podman: command not found` | Open a new terminal after installing Podman. On Windows/macOS, run `podman machine init` then `podman machine start` once |
 | "Not healthy yet" | `podman logs agency-harness` shows the error |
+| Windows: `podman machine start` fails with "machine is not listening on ssh port" | This happens when `~/.wslconfig` has `localhostForwarding=false`. Point Podman at the machine's address instead. Get the IP with `wsl -d podman-machine-default -- ip -4 -o addr show eth0`, then set `$env:CONTAINER_HOST="ssh://user@<IP>:<ssh port>/run/user/1000/podman/podman.sock"` and `$env:CONTAINER_SSHKEY="$env:USERPROFILE\.local\share\containers\podman\machine\machine"`. `host.ps1` then finds that IP by itself for the health check and the tunnel, or you can pass `-HostAddress <IP>`. That IP changes when WSL restarts |
 | Port 8080 is in use | Windows: `.\scripts\host.ps1 -Port 9090`. macOS/Linux: `HOST_PORT=9090 ./scripts/host.sh` |
 | The container doesn't come back after a reboot | Podman doesn't auto-start containers by itself. Run the script again, or on Linux run `podman generate systemd` |
