@@ -215,6 +215,10 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
           </form>
           <div style="margin-top:16px"><span class="label">Sample clips</span><div id="samples" style="margin-top:6px"></div></div>
           <audio id="player" controls style="width:100%;margin-top:12px" hidden></audio>
+          <div class="row" style="margin-top:8px" id="share-row" hidden>
+            <button class="btn" type="button" id="share-btn">Share (WhatsApp…)</button>
+            <a class="btn" id="save-link" download="vaani.wav" href="#">Save file</a>
+          </div>
         </div>
       </div>
     </section>
@@ -428,9 +432,12 @@ $("#job-form").addEventListener("submit", async e => {
 
 // ───── Voice lab ─────
 let lastUrl = null;
+let lastBlob = null, lastName = "vaani.wav";
 function play(blob, label) {
   if (lastUrl) URL.revokeObjectURL(lastUrl);
   lastUrl = URL.createObjectURL(blob);
+  lastBlob = blob; lastName = (label && label.endsWith(".wav")) ? label : "vaani-message.wav";
+  $("#share-row").hidden = false; $("#save-link").href = lastUrl; $("#save-link").download = lastName;
   const p = $("#player"); p.hidden = false; p.src = lastUrl; p.title = label;
   p.play().catch(() => toast("Tap play to listen."));
 }
@@ -462,6 +469,13 @@ document.addEventListener("click", async e => {
     try { b.disabled = true; const r = await fetchAudio(`/v1/voice/samples/${encodeURIComponent(b.dataset.sample)}`); play(await r.blob(), b.dataset.sample); }
     catch (err) { if (err.message !== "unauthorized") toast(err.message); } finally { b.disabled = false; }
   }
+});
+$("#share-btn").addEventListener("click", async () => {
+  if (!lastBlob) return;
+  const file = new File([lastBlob], lastName, { type: "audio/wav" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: "Vaani" }); } catch (err) { if (err.name !== "AbortError") toast("Sharing didn't work here. Use Save file instead."); }
+  } else toast("This browser can't share files. Use Save file instead.");
 });
 $("#speak-form").addEventListener("submit", async e => {
   e.preventDefault();
