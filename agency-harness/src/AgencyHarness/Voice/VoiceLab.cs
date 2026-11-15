@@ -7,7 +7,7 @@ public class VoiceLabOptions
 {
     /// <summary>Folder of sample WAVs to audition (in the container: the /data volume).</summary>
     public string SamplesDir { get; set; } = "voice-samples";
-    public int MaxPreviewChars { get; set; } = 500;
+    public int MaxPreviewChars { get; set; } = 1000;
 }
 
 /// <summary>Speaks one line for the Voice lab. Separate from live calls, so you can audition voices

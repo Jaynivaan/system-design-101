@@ -459,7 +459,7 @@ public class VoiceLabTests
         Assert.True(resp.Headers.Contains("X-Synthesis-Ms"));
 
         var tooLong = await c.PostAsync("/v1/voice/preview", new StringContent(
-            JsonSerializer.Serialize(new { text = new string('x', 501) }), Encoding.UTF8, "application/json"));
+            JsonSerializer.Serialize(new { text = new string('x', 1001) }), Encoding.UTF8, "application/json"));
         Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
     }
 }
