@@ -250,6 +250,8 @@ public class CallSessionTests
         await Wait.Until(() => !s.IsSpeaking || sink.Marks.Count == 2);
         Assert.Equal("ml", stt.LastLanguage);
         Assert.Contains("Malayalam", model.LastPrompt);
+        Assert.Contains("Your name is Vaani", model.LastPrompt);
+        Assert.Contains("വാണി", tts.Spoken.First().Text);
         Assert.Equal(["ശരി, ഞാൻ സന്ദേശം എടുക്കാം.", "നിങ്ങളുടെ പേര്?"], tts.Spoken.Skip(1).Select(x => x.Text));
         Assert.True(sink.Frames > 0);
         await s.DisposeAsync();

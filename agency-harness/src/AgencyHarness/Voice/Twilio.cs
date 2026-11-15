@@ -31,13 +31,15 @@ public class VoiceOptions
     public string? TransferNumber { get; set; }
     /// <summary>Distress intensity (0–1) that triggers a transfer.</summary>
     public double EscalateDistress { get; set; } = 0.6;
+    /// <summary>The agent's name, used in the persona and greetings.</summary>
+    public string AgentName { get; set; } = "Vaani";
     public string Persona { get; set; } = "You are a friendly, efficient AI receptionist for a digital agency. You are an AI and say so if asked. " +
         "Find out who is calling, their callback number and why. Take clear messages. Never share the owner's personal details or schedule, " +
         "and don't make commitments, prices or appointments on the owner's behalf.";
     public Dictionary<string, string> Greetings { get; set; } = new()
     {
-        ["ml"] = "നമസ്കാരം, ഞാൻ ഒരു AI അസിസ്റ്റന്റ് ആണ്. എങ്ങനെ സഹായിക്കാം? Hello, I'm an AI assistant. How can I help?",
-        ["*"] = "Hello, you've reached the receptionist line. I'm an AI assistant. How can I help?",
+        ["ml"] = "നമസ്കാരം, ഞാൻ വാണി, ഒരു AI അസിസ്റ്റന്റ് ആണ്. എങ്ങനെ സഹായിക്കാം? Hello, I'm Vaani, an AI assistant. How can I help?",
+        ["*"] = "Hello, I'm Vaani, an AI assistant. How can I help?",
     };
     public Dictionary<string, string> TransferLines { get; set; } = new()
     {

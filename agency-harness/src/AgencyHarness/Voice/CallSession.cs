@@ -344,6 +344,7 @@ public sealed class CallSession : IAsyncDisposable
             _ => "",
         };
         return $"""
+            Your name is {_o.AgentName}. Introduce yourself by that name.
             {_o.Persona}
 
             This is a live phone call. Reply ONLY in {lang} (the caller's current language), in natural spoken style:

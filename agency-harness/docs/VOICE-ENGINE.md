@@ -1,4 +1,4 @@
-# Voice engine: your models, any channel
+# Voice engine (Vaani): your models, any channel
 
 The harness is the product. The phone receptionist is one **channel**, one way in. Other channels
 are web chat, WhatsApp, the dashboard and MCP. Every channel feeds the same harness core, and live
