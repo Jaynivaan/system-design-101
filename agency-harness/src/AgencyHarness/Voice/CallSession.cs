@@ -94,13 +94,36 @@ public sealed class CallSession : IAsyncDisposable
     }
 
     /// <summary>Feed one inbound 20 ms μ-law frame. Called in order by the channel's reader.</summary>
+    private int _loudMs, _heardWhileSpeakingMs;
+
     public void OnAudio(byte[] mulaw)
     {
         if (_transferred) return;
-        var ev = _vad.Process(G711.DecodeAll(mulaw), out var utterance);
-        if (ev == VadEvent.SpeechStart && IsSpeaking) BargeIn();
-        else if (ev == VadEvent.SpeechEnd && utterance is not null)
+        var pcm = G711.DecodeAll(mulaw);
+        var ev = _vad.Process(pcm, out var utterance);
+        var v = _o.Vad;
+
+        // Barge-in needs more than ordinary speech detection: sustained, louder speech after a short grace period.
+        // Echo of our own voice and background noise are quieter and patchier, so they don't cut us off.
+        if (IsSpeaking)
         {
+            _heardWhileSpeakingMs += 20;
+            var level = Pcm.LevelDb(pcm);
+            var loud = level > Math.Max(_vad.NoiseFloorDb + v.MarginDb, v.MinSpeechDb) + v.BargeInExtraDb;
+            _loudMs = loud ? _loudMs + 20 : Math.Max(0, _loudMs - 40);
+            if (_loudMs >= v.BargeInMs && _heardWhileSpeakingMs >= v.BargeInGraceMs)
+            {
+                _loudMs = 0;
+                BargeIn();
+            }
+        }
+        else { _loudMs = 0; _heardWhileSpeakingMs = 0; }
+
+        if (ev == VadEvent.SpeechEnd && utterance is not null)
+        {
+            // Too short to be a turn (a cough, a click), or sound that overlapped our speech without
+            // being a real interruption (likely echo): ignore it rather than abandoning our reply.
+            if (utterance.Seconds * 1000 < v.MinUtteranceMs || IsSpeaking) return;
             if (_unprocessed is { } prev)   // the caller kept talking before we'd understood the last bit
             {
                 utterance = new PcmAudio(prev.Samples.Concat(utterance.Samples).ToArray(), utterance.SampleRate);
@@ -248,19 +271,25 @@ public sealed class CallSession : IAsyncDisposable
         }
         try
         {
+            // The first sentence is spoken as soon as it's complete (fast first words); after that, sentences are
+            // grouped into larger chunks so a reply makes 2–3 speech requests instead of one per sentence
+            // (fewer rate-limit hits, smoother prosody).
+            var pending = new StringBuilder();
+            async Task SpeakAsync(string text)
+            {
+                var t = await SpeakSentenceAsync(turn, text, StyleFor(emotion), sinceEndOfSpeech, ct);
+                ttfa ??= t;
+                said.Append(said.Length > 0 ? " " : "").Append(text);
+            }
             await foreach (var token in _p.Model.RespondAsync(prompt, history, ct))
                 foreach (var sentence in chunker.Push(token))
                 {
-                    var t = await SpeakSentenceAsync(turn, sentence, StyleFor(emotion), sinceEndOfSpeech, ct);
-                    ttfa ??= t;
-                    said.Append(said.Length > 0 ? " " : "").Append(sentence);
+                    if (said.Length == 0 && pending.Length == 0) { await SpeakAsync(sentence); continue; }
+                    pending.Append(pending.Length > 0 ? " " : "").Append(sentence);
+                    if (pending.Length >= _o.SpeechChunkChars) { await SpeakAsync(pending.ToString()); pending.Clear(); }
                 }
-            if (chunker.Flush() is { } rest)
-            {
-                var t = await SpeakSentenceAsync(turn, rest, StyleFor(emotion), sinceEndOfSpeech, ct);
-                ttfa ??= t;
-                said.Append(said.Length > 0 ? " " : "").Append(rest);
-            }
+            if (chunker.Flush() is { } rest) pending.Append(pending.Length > 0 ? " " : "").Append(rest);
+            if (pending.Length > 0) await SpeakAsync(pending.ToString());
         }
         catch (ProviderUnavailableException e)
         {
@@ -306,7 +335,12 @@ public sealed class CallSession : IAsyncDisposable
             }
         }
         var mark = $"t{turn}-{Interlocked.Increment(ref _markSeq)}";
-        lock (_gate) _pendingMarks[mark] = (turn, sentence);
+        lock (_gate)
+        {
+            // Barge-in cancels under this same lock, so a sentence can't register playback after it was cut off.
+            ct.ThrowIfCancellationRequested();
+            _pendingMarks[mark] = (turn, sentence);
+        }
         await _sink.MarkAsync(mark, ct);
         return ttfa;
     }

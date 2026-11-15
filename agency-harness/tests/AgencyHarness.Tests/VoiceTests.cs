@@ -17,12 +17,12 @@ namespace AgencyHarness.Tests;
 internal static class Tone
 {
     /// <summary>20 ms μ-law frames: a 300 Hz tone (speech stand-in) or silence.</summary>
-    public static IEnumerable<byte[]> Frames(int ms, bool speech)
+    public static IEnumerable<byte[]> Frames(int ms, bool speech, double amplitude = 9000)
     {
         for (int f = 0; f < ms / 20; f++)
         {
             var pcm = new short[160];
-            if (speech) for (int i = 0; i < 160; i++) pcm[i] = (short)(9000 * Math.Sin(2 * Math.PI * 300 * (f * 160 + i) / 8000.0));
+            if (speech) for (int i = 0; i < 160; i++) pcm[i] = (short)(amplitude * Math.Sin(2 * Math.PI * 300 * (f * 160 + i) / 8000.0));
             yield return G711.EncodeAll(pcm);
         }
     }
@@ -284,6 +284,46 @@ public class CallSessionTests
     }
 
     [Fact]
+    public async Task Quiet_echo_and_short_noises_while_vaani_speaks_dont_cut_her_off()
+    {
+        var model = new FakeModel("First sentence here. ", "Second sentence. ") { DelayPerToken = TimeSpan.FromMilliseconds(200) };
+        var (s, sink, tts, _, _, _) = Make(model: model, tts: new FakeTts(seconds: 3));
+        await s.StartAsync();
+        await GreetingPlayed(s, sink);
+        Say(s);
+        await Wait.Until(() => tts.Spoken.Count == 2);
+        Assert.True(s.IsSpeaking);
+
+        foreach (var f in Tone.Frames(800, true, amplitude: 250)) s.OnAudio(f);   // faint echo of her own voice
+        foreach (var f in Tone.Frames(160, true)) s.OnAudio(f);                   // a cough
+        foreach (var f in Tone.Frames(700, false)) s.OnAudio(f);
+        Assert.Equal(0, sink.Clears);
+        Assert.False(model.Cancelled);
+
+        foreach (var f in Tone.Frames(400, true)) s.OnAudio(f);                   // the caller really talks over her
+        await Wait.Until(() => sink.Clears == 1);
+        await s.DisposeAsync();
+    }
+
+    [Fact]
+    public async Task Long_replies_are_spoken_in_a_few_chunks_not_one_request_per_sentence()
+    {
+        var model = new FakeModel("One. ", "Two is a bit longer than one. ", "Three keeps going for a while. ", "Four adds more detail here. ", "Five ends it.");
+        var (s, sink, tts, _, _, _) = Make(model: model);
+        await s.StartAsync();
+        await GreetingPlayed(s, sink);
+        Say(s);
+        await Wait.Until(() => s.Turns.Count >= 2 && !string.IsNullOrEmpty(s.Turns.Last().AssistantText) && !s.IsSpeaking || sink.Marks.Count >= 2, 5000);
+        await Wait.Until(() => tts.Spoken.Count >= 3);
+        var reply = tts.Spoken.Skip(1).Select(x => x.Text).ToList();
+        Assert.Equal("One.", reply[0]);                 // first sentence immediately
+        Assert.Equal(2, reply.Count);                    // the other four in one chunk
+        Assert.StartsWith("Two is", reply[1]);
+        Assert.EndsWith("Five ends it.", reply[1]);
+        await s.DisposeAsync();
+    }
+
+    [Fact]
     public async Task Switches_language_when_the_caller_does()
     {
         var langs = new Queue<LangResult?>([new LangResult("hi", 0.95)]);
@@ -506,6 +546,37 @@ public class GeminiAdapterTests
         var r = await new GeminiSpeechToText(new HttpClient(stub), new GeminiSttOptions { ApiKey = "k" }).TranscribeAsync(Tone.Audio(0.3, 8000), null, default);
         Assert.Equal("hello", r.Text);
         Assert.Null(r.Language);
+    }
+
+    [Fact]
+    public async Task Gemini_tts_retries_a_rate_limit_then_falls_back_to_another_model()
+    {
+        var pcm = new byte[4800];
+        int calls = 0;
+        var stub = new Stub(r =>
+        {
+            calls++;
+            return r.RequestUri!.AbsolutePath.Contains("lite-tts")
+                ? JsonSerializer.Serialize(new { candidates = new[] { new { content = new { parts = new[] { new { inlineData = new { mimeType = "audio/L16;rate=24000", data = Convert.ToBase64String(pcm) } } } } } } })
+                : "RATE";
+        });
+        var handler = new RateLimitingHandler(stub);
+        var tts = new GeminiTextToSpeech(new HttpClient(handler), new GeminiTtsOptions { ApiKey = "k", Model = "main-tts", FallbackModels = ["main-lite-tts"], MaxRetryWaitMs = 10 });
+        var audio = await tts.SpeakAsync("നമസ്കാരം", "ml", null, default);
+        Assert.Equal(2400, audio.Samples.Length);
+        Assert.Equal(["main-tts", "main-tts", "main-lite-tts"], handler.Models);   // try, retry once, then fall back
+    }
+
+    /// <summary>Turns the stub's "RATE" answers into real 429 responses.</summary>
+    private class RateLimitingHandler(Stub inner) : DelegatingHandler(inner)
+    {
+        public readonly List<string> Models = new();
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct)
+        {
+            Models.Add(r.RequestUri!.AbsolutePath.Split('/').Last().Split(':')[0]);
+            var resp = await base.SendAsync(r, ct);
+            return await resp.Content.ReadAsStringAsync(ct) == "RATE" ? new HttpResponseMessage(HttpStatusCode.TooManyRequests) : resp;
+        }
     }
 
     [Fact]

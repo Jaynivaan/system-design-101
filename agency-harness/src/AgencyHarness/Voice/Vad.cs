@@ -16,6 +16,14 @@ public class VadOptions
     public double MinSpeechDb { get; set; } = -42;
     /// <summary>Longest single utterance before it's cut and sent anyway.</summary>
     public int MaxUtteranceMs { get; set; } = 15_000;
+    /// <summary>While we're speaking, the caller must talk this long to count as interrupting (echo and noise are shorter).</summary>
+    public int BargeInMs { get; set; } = 300;
+    /// <summary>…and this many dB louder than normal speech detection, because leftover echo of our own voice is quieter than a real voice.</summary>
+    public double BargeInExtraDb { get; set; } = 6;
+    /// <summary>Ignore interruptions in the first moments of our playback, when echo cancellers are still adapting.</summary>
+    public int BargeInGraceMs { get; set; } = 250;
+    /// <summary>Utterances shorter than this are coughs, clicks or noise, not turns.</summary>
+    public int MinUtteranceMs { get; set; } = 350;
 }
 
 /// <summary>

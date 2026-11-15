@@ -30,6 +30,8 @@ public class VoiceOptions
     /// <summary>How confident language ID must be to switch on a single utterance (otherwise two in a row).</summary>
     public double LanguageSwitchScore { get; set; } = 0.8;
     public string? TransferNumber { get; set; }
+    /// <summary>After the first sentence, speak in chunks of about this many characters (fewer TTS requests).</summary>
+    public int SpeechChunkChars { get; set; } = 220;
     /// <summary>Distress intensity (0–1) that triggers a transfer.</summary>
     public double EscalateDistress { get; set; } = 0.6;
     /// <summary>The agent's name, used in the persona and greetings.</summary>

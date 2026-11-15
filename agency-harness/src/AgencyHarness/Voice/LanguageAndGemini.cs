@@ -56,6 +56,10 @@ public class GeminiTtsOptions
     public Dictionary<string, string> Voices { get; set; } = new() { ["*"] = "Kore" };
     /// <summary>Read from the GEMINI_API_KEY environment variable when empty.</summary>
     public string? ApiKey { get; set; }
+    /// <summary>Other TTS models to try when the main one is rate-limited or down (each has its own quota).</summary>
+    public string[] FallbackModels { get; set; } = [];
+    /// <summary>Longest wait for a rate limit to clear before trying the next model.</summary>
+    public int MaxRetryWaitMs { get; set; } = 1500;
 }
 
 /// <summary>
@@ -80,16 +84,32 @@ public class GeminiTextToSpeech(HttpClient http, GeminiTtsOptions o) : ITextToSp
                 speechConfig = new { voiceConfig = new { prebuiltVoiceConfig = new { voiceName = voice } } },
             },
         });
-        using var req = new HttpRequestMessage(HttpMethod.Post, $"{o.BaseUrl.TrimEnd('/')}/v1beta/models/{o.Model}:generateContent")
+        // Main model, a short retry if it's rate-limited, then the fallback models (each has its own quota).
+        var attempts = new List<string> { o.Model, o.Model };
+        attempts.AddRange(o.FallbackModels);
+        HttpResponseMessage? resp = null;
+        string? lastError = null;
+        for (int i = 0; i < attempts.Count; i++)
         {
-            Content = new StringContent(body, Encoding.UTF8, "application/json"),
-        };
-        req.Headers.Add("x-goog-api-key", key);
-        HttpResponseMessage resp;
-        try { resp = await http.SendAsync(req, ct); }
-        catch (HttpRequestException e) { throw new ProviderUnavailableException("Gemini TTS unreachable: " + e.Message, e); }
+            if (i == 1 && lastError != "429") continue;   // the same-model retry is only for rate limits
+            using var req = new HttpRequestMessage(HttpMethod.Post, $"{o.BaseUrl.TrimEnd('/')}/v1beta/models/{attempts[i]}:generateContent")
+            {
+                Content = new StringContent(body, Encoding.UTF8, "application/json"),
+            };
+            req.Headers.Add("x-goog-api-key", key);
+            try { resp = await http.SendAsync(req, ct); }
+            catch (HttpRequestException e) { lastError = e.Message; continue; }
+            if (resp.IsSuccessStatusCode) break;
+            lastError = ((int)resp.StatusCode).ToString();
+            if (resp.StatusCode == System.Net.HttpStatusCode.TooManyRequests && i == 0)
+            {
+                var wait = resp.Headers.RetryAfter?.Delta ?? TimeSpan.FromMilliseconds(700);
+                await Task.Delay(TimeSpan.FromMilliseconds(Math.Min(wait.TotalMilliseconds, o.MaxRetryWaitMs)), ct);
+            }
+            resp.Dispose(); resp = null;
+        }
+        if (resp is null) throw new ProviderUnavailableException($"Gemini TTS unavailable ({lastError}).");
         using var _ = resp;
-        if (!resp.IsSuccessStatusCode) throw new ProviderUnavailableException($"Gemini TTS returned {(int)resp.StatusCode}.");
 
         using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
         try
