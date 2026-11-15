@@ -25,6 +25,9 @@ public class ModelProfile
     public bool Tools { get; set; } = true;
     public int MaxTokens { get; set; } = 4096;
     public double Temperature { get; set; } = 0.4;
+    /// <summary>How much the model thinks before answering ("none", "low", "medium", "high"), sent as
+    /// reasoning_effort for servers that support it (Gemini, OpenAI). Lower is much faster.</summary>
+    public string? ReasoningEffort { get; set; }
     public int TimeoutSeconds { get; set; } = 240;
     /// <summary>USD per million tokens, for the usage ledger (0 for local models).</summary>
     public decimal InputPerMillion { get; set; }
@@ -74,6 +77,7 @@ public class OpenAiChatAgentRunner(HttpClient http, string profileName, ModelPro
                 ["stream"] = false,
             };
             if (p.Tools) body["tools"] = ToolDefs(tools);
+            if (!string.IsNullOrEmpty(p.ReasoningEffort)) body["reasoning_effort"] = p.ReasoningEffort;
 
             var (message, usage) = await CallAsync(body, ct);
             inTok += usage.In; outTok += usage.Out;

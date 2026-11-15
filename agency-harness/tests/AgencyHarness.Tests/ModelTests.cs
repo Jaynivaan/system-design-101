@@ -89,8 +89,10 @@ public class ModelTests
         {
             ["Harness:Models:Profiles:local:BaseUrl"] = "http://127.0.0.1:11434/v1",
             ["Harness:Models:Profiles:local:Model"] = "gemma3:4b",
+            ["Harness:Models:Profiles:local:ReasoningEffort"] = "low",
         });
         var r = await RunJobAsync(app);
+        Assert.Equal("low", server.Requests.First()["reasoning_effort"]!.GetValue<string>());
         Assert.Equal("Succeeded", r.GetProperty("state").GetProperty("status").GetString());
         Assert.Equal("local (gemma3:4b)", r.GetProperty("state").GetProperty("model").GetString());
         Assert.Equal("Onam taglines", r.GetProperty("delivs")[0].GetProperty("title").GetString());
@@ -121,6 +123,7 @@ public class ModelTests
         Assert.Equal("Wrote the taglines.", r.GetProperty("state").GetProperty("output").GetString());
         Assert.Equal("Sadya season is here.", r.GetProperty("delivs")[0].GetProperty("content").GetString());
         Assert.Null(server.Requests.First()["tools"]);
+        Assert.Null(server.Requests.First()["reasoning_effort"]);   // not sent unless configured
         Assert.Contains("exactly ONE JSON object", server.Requests.First()["messages"]![0]!["content"]!.GetValue<string>());
     }
 

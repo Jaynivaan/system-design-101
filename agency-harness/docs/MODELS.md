@@ -30,6 +30,7 @@ Harness__Models__Profiles__local__Model=gemma4:e4b
 Harness__Models__Profiles__gemini__BaseUrl=https://generativelanguage.googleapis.com/v1beta/openai
 Harness__Models__Profiles__gemini__Model=gemini-3.8-flash
 Harness__Models__Profiles__gemini__ApiKeyEnv=GEMINI_API_KEY
+Harness__Models__Profiles__gemini__ReasoningEffort=low
 Harness__Models__Routing__default__0=local
 Harness__Models__Routing__default__1=gemini
 ```
@@ -75,6 +76,7 @@ Roles without their own chain use `default`.
 | `ApiKeyEnv` | (none) | Environment variable(s) holding the key, comma-separated |
 | `Tools` | `true` | `false` for models without native tool calling |
 | `MaxTokens` | 4096 | Output limit per step |
+| `ReasoningEffort` | (model default) | `none`, `low`, `medium` or `high`, sent as `reasoning_effort`. Thinking models (Gemini 3.x flash) can spend minutes per step at their default; `low` is usually plenty for agency work |
 | `TimeoutSeconds` | 240 | Local models on a small GPU may need longer |
 | `InputPerMillion` / `OutputPerMillion` | 0 | USD per million tokens, for the usage ledger |
 

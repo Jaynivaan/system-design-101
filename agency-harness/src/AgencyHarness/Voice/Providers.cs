@@ -53,6 +53,8 @@ public class OpenAiCompatibleOptions
     public string ChatPath { get; set; } = "/v1/chat/completions";
     public int MaxTokens { get; set; } = 300;
     public double Temperature { get; set; } = 0.6;
+    /// <summary>Sent as reasoning_effort when set. For live voice use "none" or "low": thinking delays the first word.</summary>
+    public string? ReasoningEffort { get; set; }
 }
 
 /// <summary>
@@ -69,7 +71,9 @@ public class OpenAiCompatibleResponseModel(HttpClient http, OpenAiCompatibleOpti
     {
         var messages = new List<object> { new { role = "system", content = systemPrompt } };
         messages.AddRange(history.Select(h => new { role = h.Role, content = h.Text }));
-        var body = JsonSerializer.Serialize(new { model = o.Model, messages, stream = true, max_tokens = o.MaxTokens, temperature = o.Temperature });
+        var payload = new Dictionary<string, object?> { ["model"] = o.Model, ["messages"] = messages, ["stream"] = true, ["max_tokens"] = o.MaxTokens, ["temperature"] = o.Temperature };
+        if (!string.IsNullOrEmpty(o.ReasoningEffort)) payload["reasoning_effort"] = o.ReasoningEffort;
+        var body = JsonSerializer.Serialize(payload);
 
         using var req = new HttpRequestMessage(HttpMethod.Post, o.BaseUrl.TrimEnd('/') + o.ChatPath)
         {
