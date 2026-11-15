@@ -1,0 +1,432 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#2f3fbf">
+<title>Agency Harness</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,600;12..96,700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+/* Dispatch board for a live harness: projects on the left, the queue as state-machine lanes in the
+   middle, deliverables / events / usage on the right. Everything comes from the /v1 API. */
+:root {
+  --bg: #eef0ec; --panel: #f8f9f6; --raise: #ffffff; --ink: #1a2230; --muted: #5d6676; --line: #d5d9d2;
+  --accent: #2f3fbf; --accent-soft: #e2e5fa; --on-accent: #ffffff;
+  --ok: #1d7a4c; --ok-soft: #dcf0e4; --warn: #a8640a; --warn-soft: #f8ead2; --crit: #b3261e; --crit-soft: #f7dedb;
+  --font-display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
+  --font-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, Menlo, Consolas, monospace;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) { :root {
+  --bg: #12161d; --panel: #181d26; --raise: #1f2530; --ink: #e6e9ef; --muted: #98a1b2; --line: #2c3340;
+  --accent: #8d9bff; --accent-soft: #252c55; --on-accent: #10131a;
+  --ok: #5cc98f; --ok-soft: #173326; --warn: #e3a54a; --warn-soft: #3a2b13; --crit: #ff8a80; --crit-soft: #3d1c1a;
+  color-scheme: dark } }
+* { box-sizing: border-box; }
+html, body { margin: 0; }
+body { background: var(--bg); color: var(--ink); font: 14px/1.5 var(--font-body);
+  padding: env(safe-area-inset-top, 0px) max(16px, env(safe-area-inset-right, 0px)) calc(32px + env(safe-area-inset-bottom, 0px)) max(16px, env(safe-area-inset-left, 0px)); }
+h1, h2 { font-family: var(--font-display); margin: 0; letter-spacing: -0.01em; text-wrap: balance; }
+h2 { font-size: 15px; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+[hidden] { display: none !important; }
+.mono { font-family: var(--font-mono); font-variant-numeric: tabular-nums; }
+.muted { color: var(--muted); }
+.label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: var(--muted); font-weight: 600; }
+.btn { border: 1px solid var(--line); background: var(--raise); border-radius: 8px; padding: 7px 12px; font-weight: 500; }
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); color: var(--on-accent); border-color: var(--accent); }
+.btn.small { padding: 3px 9px; font-size: 12px; }
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+input[type=text], input[type=password], textarea, select { width: 100%; background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; }
+textarea { resize: vertical; min-height: 74px; }
+.field { display: flex; flex-direction: column; gap: 4px; }
+.field + .field { margin-top: 10px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.panel { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 14px; min-width: 0; }
+.panel-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+
+/* Sign in */
+.signin { max-width: 420px; margin: 12vh auto 0; display: flex; flex-direction: column; gap: 14px; }
+.signin h1 { font-size: 30px; }
+.signin p { margin: 0; color: var(--muted); }
+.err { color: var(--crit); font-size: 13px; min-height: 1.5em; }
+
+/* Top bar */
+.top { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 18px; padding-block: 16px 12px; border-bottom: 1px solid var(--line); margin-bottom: 16px; }
+.top h1 { font-size: 22px; }
+.chips { display: flex; flex-wrap: wrap; gap: 8px; margin-left: auto; align-items: center; }
+.chip { display: inline-flex; align-items: center; gap: 6px; border: 1px solid var(--line); background: var(--panel); border-radius: 999px; padding: 3px 10px; font-size: 12px; white-space: nowrap; }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.dot.ok { background: var(--ok); } .dot.warn { background: var(--warn); } .dot.crit { background: var(--crit); }
+
+/* Layout */
+.grid { display: grid; grid-template-columns: 270px minmax(0, 1fr) 360px; gap: 16px; align-items: start; }
+@media (max-width: 1200px) { .grid { grid-template-columns: 260px minmax(0, 1fr); } .right { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .grid { grid-template-columns: minmax(0, 1fr); } }
+.col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+
+.proj { text-align: left; width: 100%; border: 1px solid transparent; background: transparent; border-radius: 8px; padding: 7px 9px; display: flex; flex-direction: column; }
+.proj:hover { background: var(--raise); border-color: var(--line); }
+.proj[aria-current="true"] { background: var(--raise); border-color: var(--accent); }
+.proj .c { font-size: 12px; color: var(--muted); }
+.proj .p { font-weight: 600; }
+.roles { display: flex; flex-wrap: wrap; gap: 6px; }
+.role-opt { border: 1px solid var(--line); background: var(--raise); border-radius: 999px; padding: 4px 11px; font-size: 13px; }
+.role-opt[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); font-weight: 600; }
+
+.lanes { display: grid; grid-template-columns: repeat(5, minmax(128px, 1fr)); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.lane { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; min-height: 200px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.lane-head { display: flex; justify-content: space-between; }
+.lane[data-s="Running"] { border-top: 3px solid var(--accent); }
+.lane[data-s="Queued"] { border-top: 3px solid var(--muted); }
+.lane[data-s="Succeeded"] { border-top: 3px solid var(--ok); }
+.lane[data-s="Failed"] { border-top: 3px solid var(--warn); }
+.lane[data-s="DeadLettered"] { border-top: 3px solid var(--crit); }
+.empty { font-size: 12px; color: var(--muted); }
+.card { background: var(--raise); border: 1px solid var(--line); border-radius: 8px; padding: 8px 9px; display: flex; flex-direction: column; gap: 4px; text-align: left; width: 100%; }
+.card:hover { border-color: var(--accent); }
+.card .role { font-weight: 600; font-size: 13px; display: flex; justify-content: space-between; }
+.card .ins { font-size: 12px; color: var(--muted); display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+.card .meta { font-family: var(--font-mono); font-size: 11px; color: var(--muted); display: flex; gap: 4px 8px; flex-wrap: wrap; }
+.card .e { font-size: 11px; color: var(--crit); }
+.sub { font-family: var(--font-mono); font-size: 10px; color: var(--accent); }
+
+.tabs { display: flex; gap: 2px; border-bottom: 1px solid var(--line); margin: -4px -4px 12px; overflow-x: auto; }
+.tab { border: 0; background: transparent; padding: 8px 11px; border-bottom: 2px solid transparent; color: var(--muted); font-weight: 600; white-space: nowrap; }
+.tab[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
+.deliv { border: 1px solid var(--line); border-radius: 8px; background: var(--raise); }
+.deliv + .deliv { margin-top: 8px; }
+.deliv summary { padding: 9px 11px; cursor: pointer; display: flex; flex-direction: column; }
+.md { padding: 0 12px 12px; font-size: 13.5px; overflow-wrap: anywhere; }
+.md h3 { font-size: 15px; margin: 12px 0 4px; font-family: var(--font-display); }
+.md p { margin: 6px 0; }
+.md ul, .md ol { padding-left: 20px; }
+.md code { font-family: var(--font-mono); font-size: 12px; background: var(--panel); padding: 1px 4px; border-radius: 4px; }
+.md pre { background: var(--panel); padding: 8px; border-radius: 6px; overflow-x: auto; }
+.md .tw { overflow-x: auto; }
+.md table { border-collapse: collapse; font-size: 12.5px; }
+.md th, .md td { border: 1px solid var(--line); padding: 4px 7px; text-align: left; vertical-align: top; }
+.events { font-family: var(--font-mono); font-size: 11.5px; max-height: 520px; overflow-y: auto; }
+.ev { display: grid; grid-template-columns: 54px minmax(0, 1fr); gap: 8px; padding: 5px 0; border-bottom: 1px dashed var(--line); }
+.ev .k.ok { color: var(--ok); } .ev .k.warn { color: var(--warn); } .ev .k.crit { color: var(--crit); }
+.ev .d { color: var(--muted); overflow-wrap: anywhere; }
+table.usage { width: 100%; border-collapse: collapse; font-size: 13px; }
+table.usage th, table.usage td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--line); font-variant-numeric: tabular-nums; }
+table.usage th:first-child, table.usage td:first-child { text-align: left; }
+
+.back { position: fixed; inset: 0; background: rgba(10, 14, 20, .35); z-index: 20; }
+.drawer { position: fixed; top: 0; right: 0; bottom: 0; width: min(520px, 100%); background: var(--panel); border-left: 1px solid var(--line); z-index: 21; overflow-y: auto;
+  padding: calc(16px + env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) 18px; display: flex; flex-direction: column; gap: 12px; }
+.kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 10px; font-size: 13px; margin: 0; }
+.kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 30; max-width: calc(100% - 32px); }
+</style>
+</head>
+<body>
+
+<section class="signin" id="signin" hidden>
+  <h1>Agency Harness</h1>
+  <p>Sign in with your agency's API key. It starts with <span class="mono">ak_</span> and was shown once, when your agency was created.</p>
+  <form id="signin-form" class="col" style="gap:10px">
+    <div class="field"><label class="label" for="key">API key</label><input id="key" type="password" autocomplete="current-password" placeholder="ak_…" required></div>
+    <label class="row muted" style="font-size:13px"><input type="checkbox" id="remember" checked> Remember on this device</label>
+    <button class="btn primary" type="submit">Sign in</button>
+    <div class="err" id="signin-err" role="alert"></div>
+  </form>
+</section>
+
+<div id="app" hidden>
+  <header class="top">
+    <h1 id="agency">Agency Harness</h1>
+    <div class="chips">
+      <span class="chip" id="chip-spend"><span class="dot"></span><span>Spend</span></span>
+      <span class="chip" id="chip-model"><span class="dot"></span><span>Model</span></span>
+      <span class="chip" id="chip-sync"><span class="dot ok"></span><span>Live</span></span>
+      <button class="btn small" id="signout" type="button">Sign out</button>
+    </div>
+  </header>
+
+  <main class="grid">
+    <section class="col">
+      <div class="panel">
+        <div class="panel-head"><h2>Projects</h2><button class="btn small" id="new-client" type="button">New client</button></div>
+        <div id="projects"></div>
+        <form id="client-form" hidden style="margin-top:10px">
+          <div class="field"><label class="label" for="cf-name">Client name</label><input id="cf-name" type="text" required maxlength="200"></div>
+          <div class="field"><label class="label" for="cf-brief">Brief: voice, audience, goals</label><textarea id="cf-brief" maxlength="4000"></textarea></div>
+          <div class="field"><label class="label" for="cf-project">First project</label><input id="cf-project" type="text" required maxlength="200"></div>
+          <div class="field"><label class="label" for="cf-goal">Project goal</label><input id="cf-goal" type="text" maxlength="500"></div>
+          <div class="row" style="margin-top:10px"><button class="btn primary" type="submit">Add client</button><button class="btn" type="button" id="cf-cancel">Cancel</button></div>
+        </form>
+      </div>
+
+      <form class="panel" id="job-form">
+        <div class="panel-head"><h2>Queue a job</h2></div>
+        <div class="field"><span class="label" id="roles-label">Agent</span><div class="roles" id="roles" role="group" aria-labelledby="roles-label"></div></div>
+        <div class="field"><label class="label" for="ins">Instructions</label><textarea id="ins" maxlength="20000" required placeholder="Write three subject lines and a 120-word launch email."></textarea></div>
+        <div class="field"><label class="label" for="pri">Priority</label>
+          <select id="pri"><option value="1">1 · urgent</option><option value="5" selected>5 · normal</option><option value="9">9 · whenever</option></select></div>
+        <div class="row" style="margin-top:12px"><button class="btn primary" type="submit" id="queue-btn">Queue job</button></div>
+        <p class="muted" id="job-result" style="margin:8px 0 0;font-size:12px" aria-live="polite"></p>
+      </form>
+    </section>
+
+    <section class="col">
+      <div class="row" style="justify-content:space-between"><h2 style="font-size:18px" id="board-title">Job queue</h2><span class="muted" id="board-sub" style="font-size:13px"></span></div>
+      <div class="lanes" id="lanes"></div>
+    </section>
+
+    <section class="col right">
+      <div class="panel">
+        <div class="tabs" role="tablist">
+          <button class="tab" role="tab" data-tab="deliv" aria-selected="true">Deliverables</button>
+          <button class="tab" role="tab" data-tab="events" aria-selected="false">Events</button>
+          <button class="tab" role="tab" data-tab="usage" aria-selected="false">Usage</button>
+        </div>
+        <div id="pane-deliv"></div>
+        <div id="pane-events" hidden><div class="events" id="events"></div></div>
+        <div id="pane-usage" hidden></div>
+      </div>
+    </section>
+  </main>
+</div>
+
+<div id="drawer"></div>
+<div class="toast" id="toast" hidden role="status"></div>
+
+<script>
+(() => {
+"use strict";
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+const t = d => d ? new Date(d).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : "";
+const money = n => "$" + Number(n || 0).toFixed(2);
+const store = { get: k => { try { return localStorage.getItem(k) || sessionStorage.getItem(k); } catch { return null; } },
+  set: (k, v, persist) => { try { (persist ? localStorage : sessionStorage).setItem(k, v); } catch {} },
+  del: k => { try { localStorage.removeItem(k); sessionStorage.removeItem(k); } catch {} } };
+let toastT; function toast(m) { const el = $("#toast"); el.textContent = m; el.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => el.hidden = true, 2800); }
+
+// ───── API client ─────
+let KEY = store.get("ah-key");
+let backoffUntil = 0;
+async function api(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "X-Api-Key": KEY, ...(opts.body ? { "Content-Type": "application/json" } : {}), ...(opts.headers || {}) } });
+  if (res.status === 401) { signOut("Your key was not accepted. Sign in again."); throw new Error("unauthorized"); }
+  if (res.status === 429) { backoffUntil = Date.now() + 60000; setSync("Rate limited · pausing 1 min", "warn"); throw new Error("Too many requests. Wait a minute and try again."); }
+  const text = await res.text();
+  const body = text ? JSON.parse(text) : null;
+  if (!res.ok) { const msg = body?.detail || body?.title || (body?.errors ? Object.values(body.errors).flat().join(" ") : "") || `Request failed (${res.status}).`; const e = new Error(msg); e.status = res.status; throw e; }
+  return body;
+}
+
+// ───── State ─────
+const S = { me: null, projects: [], projectId: store.get("ah-project"), role: "copywriter", roles: [], jobs: [], delivs: [], events: [], lastEvent: 0, tab: "deliv", drawer: null };
+
+// ───── Sign in / out ─────
+function signOut(msg) { KEY = null; store.del("ah-key"); $("#app").hidden = true; $("#signin").hidden = false; $("#signin-err").textContent = msg || ""; }
+$("#signin-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  KEY = $("#key").value.trim(); $("#signin-err").textContent = "";
+  try { await api("/v1/me"); store.set("ah-key", KEY, $("#remember").checked); $("#key").value = ""; start(); }
+  catch (err) { if (err.message !== "unauthorized") $("#signin-err").textContent = err.message; }
+});
+$("#signout").addEventListener("click", () => signOut());
+
+// ───── Loaders ─────
+async function loadMe() {
+  S.me = await api("/v1/me");
+  $("#agency").textContent = S.me.name;
+  const pct = S.me.monthlyBudgetUsd ? S.me.monthSpendUsd / S.me.monthlyBudgetUsd : 0;
+  const c = $("#chip-spend"); c.querySelector(".dot").className = "dot " + (pct >= 1 ? "crit" : pct >= 0.8 ? "warn" : "ok");
+  c.lastElementChild.textContent = `${money(S.me.monthSpendUsd)} of ${money(S.me.monthlyBudgetUsd)} this month`;
+}
+async function loadHealth() {
+  try { const h = await (await fetch("/health/ready")).json(); const c = $("#chip-model");
+    c.querySelector(".dot").className = "dot " + (h.modelCircuit === "Closed" ? "ok" : h.modelCircuit === "Open" ? "crit" : "warn");
+    c.lastElementChild.textContent = h.modelCircuit === "Closed" ? "Model OK" : "Model circuit " + h.modelCircuit.toLowerCase(); } catch {}
+}
+async function loadProjects() {
+  S.projects = await api("/v1/projects");
+  if (!S.projects.some(p => p.id === S.projectId)) S.projectId = S.projects[0]?.id ?? null;
+  renderProjects();
+}
+async function loadBoard() {
+  if (!S.projectId) { S.jobs = []; renderLanes(); return; }
+  const page = await api(`/v1/projects/${S.projectId}/jobs?limit=100`);
+  const done = j => j.filter(x => x.status === "Succeeded").length;
+  const finishedNew = done(page.items) !== done(S.jobs);
+  S.jobs = page.items; renderLanes();
+  if (finishedNew) await loadDelivs();   // a job just finished: show its deliverable right away
+  if (S.drawer) renderDrawer();
+}
+async function loadDelivs() { if (!S.projectId) { S.delivs = []; renderTab(); return; } S.delivs = await api(`/v1/projects/${S.projectId}/deliverables`); renderTab(); }
+async function loadEvents() {
+  const items = await api(`/v1/events?after=${S.lastEvent}&limit=200`);
+  if (items.length) { S.lastEvent = items[items.length - 1].id; S.events = items.reverse().concat(S.events).slice(0, 300); if (S.tab === "events") renderTab(); }
+}
+
+// ───── Render ─────
+function renderProjects() {
+  const host = $("#projects");
+  if (!S.projects.length) { host.innerHTML = `<p class="muted" style="margin:0">No clients yet. Add your first client to start queueing work.</p>`; $("#client-form").hidden = false; return; }
+  host.innerHTML = S.projects.map(p => `<button type="button" class="proj" data-project="${p.id}" aria-current="${p.id === S.projectId}">
+    <span class="c">${esc(p.clientName)}</span><span class="p">${esc(p.name)}</span>${p.goal ? `<span class="c">${esc(p.goal)}</span>` : ""}</button>`).join("");
+  const p = S.projects.find(x => x.id === S.projectId);
+  $("#board-title").textContent = p ? p.name : "Job queue";
+}
+const LANES = [["Queued", "Queued"], ["Running", "Running"], ["Failed", "Retrying"], ["Succeeded", "Done"], ["DeadLettered", "Needs attention"]];
+function renderLanes() {
+  const jobs = S.jobs;
+  $("#board-sub").textContent = S.projectId ? `${jobs.length} jobs` : "";
+  $("#lanes").innerHTML = LANES.map(([s, label]) => {
+    const items = jobs.filter(j => s === "DeadLettered" ? (j.status === "DeadLettered" || j.status === "Cancelled") : j.status === s);
+    return `<div class="lane" data-s="${s}"><div class="lane-head"><span class="label">${label}</span><span class="mono muted" style="font-size:12px">${items.length}</span></div>
+      ${items.map(card).join("") || `<div class="empty">${{ Queued: "Nothing waiting.", Running: "No agent working.", Failed: "No retries pending.", Succeeded: "Finished jobs land here.", DeadLettered: "Failed and cancelled jobs land here." }[s]}</div>`}</div>`;
+  }).join("");
+}
+function card(j) {
+  const retryIn = j.status === "Failed" ? Math.max(0, Math.round((new Date(j.nextAttemptAt) - Date.now()) / 1000)) : 0;
+  return `<button type="button" class="card" data-job="${j.id}">
+    <span class="role"><span>${esc(j.role)}</span><span class="mono muted" style="font-weight:400;font-size:11px">p${j.priority}</span></span>
+    ${j.parentJobId ? `<span class="sub">↳ delegated</span>` : ""}
+    <span class="ins">${esc(j.instructions)}</span>
+    ${j.lastError && j.status !== "Succeeded" ? `<span class="e">${esc(j.lastError.slice(0, 140))}</span>` : ""}
+    <span class="meta"><span>try ${j.attempts}/${j.maxAttempts}</span>${retryIn ? `<span>retry in ${retryIn}s</span>` : ""}${j.costUsd ? `<span>${money(j.costUsd)}</span>` : ""}<span>${t(j.completedAt || j.createdAt)}</span></span>
+  </button>`;
+}
+function md(src) {
+  const lines = String(src || "").replace(/\r/g, "").split("\n"); const out = []; let i = 0;
+  const il = s => esc(s).replace(/`([^`]+)`/g, "<code>$1</code>").replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>").replace(/(^|[^*])\*([^*]+)\*(?!\*)/g, "$1<em>$2</em>");
+  while (i < lines.length) {
+    const l = lines[i];
+    if (/^```/.test(l)) { const b = []; i++; while (i < lines.length && !/^```/.test(lines[i])) b.push(lines[i++]); i++; out.push(`<pre><code>${esc(b.join("\n"))}</code></pre>`); continue; }
+    if (/^\s*\|.*\|\s*$/.test(l) && /^\s*\|?[\s:-]+\|[\s|:-]*$/.test(lines[i + 1] || "")) {
+      const row = r => r.trim().replace(/^\||\|$/g, "").split("|").map(c => c.trim()); const h = row(l); i += 2; const b = [];
+      while (i < lines.length && /^\s*\|.*\|\s*$/.test(lines[i])) b.push(row(lines[i++]));
+      out.push(`<div class="tw"><table><thead><tr>${h.map(x => `<th>${il(x)}</th>`).join("")}</tr></thead><tbody>${b.map(r => `<tr>${r.map(x => `<td>${il(x)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`); continue; }
+    const hm = l.match(/^#{1,4}\s+(.*)$/); if (hm) { out.push(`<h3>${il(hm[1])}</h3>`); i++; continue; }
+    if (/^\s*[-*]\s+/.test(l)) { const b = []; while (i < lines.length && /^\s*[-*]\s+/.test(lines[i])) b.push(`<li>${il(lines[i++].replace(/^\s*[-*]\s+/, ""))}</li>`); out.push(`<ul>${b.join("")}</ul>`); continue; }
+    if (/^\s*\d+[.)]\s+/.test(l)) { const b = []; while (i < lines.length && /^\s*\d+[.)]\s+/.test(lines[i])) b.push(`<li>${il(lines[i++].replace(/^\s*\d+[.)]\s+/, ""))}</li>`); out.push(`<ol>${b.join("")}</ol>`); continue; }
+    if (!l.trim()) { i++; continue; }
+    const b = []; while (i < lines.length && lines[i].trim() && !/^(#{1,4}\s|```|\s*[-*]\s|\s*\d+[.)]\s|\s*\|)/.test(lines[i])) b.push(il(lines[i++]));
+    if (b.length) out.push(`<p>${b.join("<br>")}</p>`); else { out.push(`<p>${il(l)}</p>`); i++; }
+  }
+  return out.join("");
+}
+const openD = new Set();
+async function renderTab() {
+  for (const k of ["deliv", "events", "usage"]) { $(`[data-tab=${k}]`).setAttribute("aria-selected", String(k === S.tab)); $("#pane-" + k).hidden = k !== S.tab; }
+  if (S.tab === "deliv") {
+    $("#pane-deliv").innerHTML = S.delivs.length ? S.delivs.map(d => `<details class="deliv" data-d="${d.id}" ${openD.has(d.id) ? "open" : ""}>
+      <summary><strong>${esc(d.title)}</strong><span class="muted" style="font-size:12px">${esc(d.kind)} · ${t(d.createdAt)}</span></summary>
+      <div class="md">${md(d.content)}</div><div class="row" style="padding:0 12px 12px"><button class="btn small" type="button" data-copy="${d.id}">Copy Markdown</button></div></details>`).join("")
+      : `<p class="muted" style="margin:0">Deliverables appear here when agents finish work on this project.</p>`;
+  }
+  if (S.tab === "events") {
+    const tone = ty => /succeeded|created/.test(ty) ? "ok" : /dead|failed/.test(ty) ? "crit" : /retry/.test(ty) ? "warn" : "";
+    $("#events").innerHTML = S.events.map(e => `<div class="ev"><span class="muted">#${e.id}</span><span><span class="k ${tone(e.eventType)}">${esc(e.eventType)}</span>${e.delivered ? "" : ' <span class="muted">(webhook pending)</span>'}<br><span class="d">${esc(JSON.stringify(e.payload?.data ?? e.payload))}</span></span></div>`).join("")
+      || `<p class="muted" style="margin:0">No events yet.</p>`;
+  }
+  if (S.tab === "usage") {
+    try {
+      const rows = await api("/v1/usage");
+      $("#pane-usage").innerHTML = rows.length ? `<table class="usage"><thead><tr><th>Month</th><th>Jobs</th><th>Tokens in</th><th>Tokens out</th><th>Cost</th></tr></thead><tbody>${rows.map(r => `<tr><td>${esc(r.month)}</td><td>${r.jobs}</td><td>${r.inputTokens.toLocaleString()}</td><td>${r.outputTokens.toLocaleString()}</td><td>${money(r.costUsd)}</td></tr>`).join("")}</tbody></table>`
+        : `<p class="muted" style="margin:0">No usage yet this month.</p>`;
+    } catch (e) { $("#pane-usage").textContent = e.message; }
+  }
+}
+function renderDrawer() {
+  const root = $("#drawer"); const j = S.jobs.find(x => x.id === S.drawer);
+  if (!S.drawer || !j) { root.innerHTML = ""; return; }
+  const d = S.delivs.find(x => x.jobId === j.id);
+  const keep = root.querySelector(".drawer")?.scrollTop ?? 0;
+  root.innerHTML = `<div class="back" data-close></div><aside class="drawer" role="dialog" aria-modal="true" aria-label="Job details">
+    <div class="row" style="justify-content:space-between"><h2 style="font-size:18px">${esc(j.role)} job</h2><button class="btn small" type="button" data-close>Close</button></div>
+    <dl class="kv"><dt>Status</dt><dd>${esc(j.status === "Failed" ? "Retrying" : j.status)}</dd><dt>Attempts</dt><dd>${j.attempts} of ${j.maxAttempts}</dd>
+      <dt>Cost</dt><dd>${money(j.costUsd)} · ${(j.inputTokens + j.outputTokens).toLocaleString()} tokens</dd><dt>Job id</dt><dd class="mono">${esc(j.id)}</dd>
+      <dt>Instructions</dt><dd>${esc(j.instructions)}</dd>${j.lastError ? `<dt>Last error</dt><dd style="color:var(--crit)">${esc(j.lastError)}</dd>` : ""}${j.output ? `<dt>Summary</dt><dd>${esc(j.output)}</dd>` : ""}</dl>
+    <div class="row">${j.status === "DeadLettered" ? `<button class="btn primary" type="button" data-retry="${j.id}">Retry</button>` : ""}${j.status === "Queued" || j.status === "Failed" ? `<button class="btn" type="button" data-cancel="${j.id}">Cancel job</button>` : ""}</div>
+    ${d ? `<div><span class="label">Deliverable</span><div class="deliv" style="margin-top:6px"><div class="md" style="padding-top:10px">${md(d.content)}</div></div></div>` : ""}
+  </aside>`;
+  const dr = root.querySelector(".drawer"); if (dr) dr.scrollTop = keep;
+}
+function renderRoles() { $("#roles").innerHTML = S.roles.map(r => `<button type="button" class="role-opt" data-role="${esc(r.name)}" aria-pressed="${r.name === S.role}">${esc(r.name)}</button>`).join(""); }
+function setSync(text, kind) { const c = $("#chip-sync"); c.querySelector(".dot").className = "dot " + kind; c.lastElementChild.textContent = text; }
+
+// ───── Actions ─────
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button, [data-close]"); if (!b) return;
+  try {
+    if (b.dataset.project) { S.projectId = b.dataset.project; store.set("ah-project", S.projectId, true); renderProjects(); await Promise.all([loadBoard(), loadDelivs()]); }
+    else if (b.dataset.role) { S.role = b.dataset.role; renderRoles(); }
+    else if (b.dataset.job) { S.drawer = b.dataset.job; renderDrawer(); }
+    else if (b.hasAttribute("data-close")) { S.drawer = null; renderDrawer(); }
+    else if (b.dataset.tab) { S.tab = b.dataset.tab; renderTab(); }
+    else if (b.dataset.retry) { await api(`/v1/jobs/${b.dataset.retry}/retry`, { method: "POST" }); toast("Job queued again."); await loadBoard(); }
+    else if (b.dataset.cancel) { await api(`/v1/jobs/${b.dataset.cancel}/cancel`, { method: "POST" }); toast("Job cancelled."); await loadBoard(); }
+    else if (b.dataset.copy) { const d = S.delivs.find(x => x.id === b.dataset.copy); try { await navigator.clipboard.writeText(d.content); toast("Copied."); } catch { toast("Copy isn't allowed here. Select the text instead."); } }
+  } catch (err) { if (err.message !== "unauthorized") toast(err.message); }
+});
+document.addEventListener("toggle", e => { const d = e.target; if (d.dataset?.d) d.open ? openD.add(d.dataset.d) : openD.delete(d.dataset.d); }, true);
+document.addEventListener("keydown", e => { if (e.key === "Escape" && S.drawer) { S.drawer = null; renderDrawer(); } });
+$("#new-client").addEventListener("click", () => { $("#client-form").hidden = false; $("#cf-name").focus(); });
+$("#cf-cancel").addEventListener("click", () => { $("#client-form").hidden = true; });
+$("#client-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const c = await api("/v1/clients", { method: "POST", body: JSON.stringify({ name: $("#cf-name").value, brief: $("#cf-brief").value }) });
+    const p = await api(`/v1/clients/${c.id}/projects`, { method: "POST", body: JSON.stringify({ name: $("#cf-project").value, goal: $("#cf-goal").value }) });
+    S.projectId = p.id; store.set("ah-project", p.id, true); e.target.reset(); e.target.hidden = true; toast("Client added.");
+    await loadProjects(); await Promise.all([loadBoard(), loadDelivs()]);
+  } catch (err) { toast(err.message); }
+});
+$("#job-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  if (!S.projectId) { $("#job-result").textContent = "Add a client and project first."; return; }
+  const btn = $("#queue-btn"); btn.disabled = true;
+  // One key per click: a double tap or a retried request can never queue the same job twice.
+  const key = "web-" + (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random());
+  try {
+    const r = await api(`/v1/projects/${S.projectId}/jobs`, { method: "POST", headers: { "Idempotency-Key": key },
+      body: JSON.stringify({ role: S.role, instructions: $("#ins").value, priority: Number($("#pri").value) }) });
+    $("#job-result").textContent = `Queued ${S.role} job ${r.id.slice(0, 8)}.`; $("#ins").value = "";
+    await loadBoard();
+  } catch (err) { $("#job-result").textContent = err.message; }
+  finally { btn.disabled = false; }
+});
+
+// ───── Live refresh (pauses when hidden or rate-limited) ─────
+let tick = 0;
+async function poll() {
+  if (document.hidden || Date.now() < backoffUntil || !KEY) return;
+  tick++;
+  try {
+    await loadBoard();
+    if (tick % 2 === 0) await loadEvents();
+    if (tick % 4 === 0) { await loadDelivs(); await loadMe(); await loadHealth(); }
+    setSync("Live", "ok");
+  } catch (err) { if (err.message !== "unauthorized" && Date.now() >= backoffUntil) setSync("Reconnecting…", "warn"); }
+}
+setInterval(poll, 3000);
+document.addEventListener("visibilitychange", () => { if (!document.hidden) poll(); });
+
+async function start() {
+  $("#signin").hidden = true; $("#app").hidden = false;
+  try {
+    S.roles = await api("/v1/roles"); renderRoles();
+    await Promise.all([loadMe(), loadHealth(), loadProjects()]);
+    await Promise.all([loadBoard(), loadDelivs(), loadEvents()]);
+    renderTab();
+  } catch (err) { if (err.message !== "unauthorized") toast(err.message); }
+}
+if (KEY) start(); else signOut();
+})();
+</script>
+</body>
+</html>

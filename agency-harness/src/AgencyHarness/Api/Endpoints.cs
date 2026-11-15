@@ -60,6 +60,18 @@ public static class Endpoints
             return Results.Ok(ToPage(items, take, c => c.CreatedAt));
         });
 
+        // All projects with their client's name: what the dashboard's sidebar needs in one call.
+        v1.MapGet("/projects", async (HttpContext http, HarnessDbContext db) =>
+        {
+            var tid = http.Tenant().Id;
+            var rows = await (from p in db.Projects.AsNoTracking()
+                              join c in db.Clients.AsNoTracking() on p.ClientId equals c.Id
+                              where p.TenantId == tid
+                              orderby p.CreatedAt
+                              select new { p.Id, p.Name, p.Goal, p.ClientId, clientName = c.Name, clientBrief = c.Brief }).ToListAsync();
+            return Results.Ok(rows);
+        });
+
         v1.MapPut("/clients/{id:guid}/brief", async (Guid id, UpdateBriefRequest req, HttpContext http, HarnessDbContext db, ClientBriefCache cache) =>
         {
             var tid = http.Tenant().Id;

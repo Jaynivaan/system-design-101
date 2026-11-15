@@ -85,6 +85,21 @@ public class IntegrationTests
     }
 
     [Fact]
+    public async Task Dashboard_is_served_at_root_and_lists_projects_with_client_names()
+    {
+        using var app = new HarnessFactory();
+        var root = await app.CreateClient().GetAsync("/");
+        Assert.Equal("text/html", root.Content.Headers.ContentType?.MediaType);
+        Assert.Contains("Agency Harness", await root.Content.ReadAsStringAsync());
+
+        var (c, _) = await app.NewTenantAsync();
+        var projectId = await HarnessFactory.CreateProjectAsync(c);
+        var projects = await Json(await c.GetAsync("/v1/projects"));
+        Assert.Equal(projectId, projects[0].GetProperty("id").GetGuid());
+        Assert.Equal("Bloom Coffee", projects[0].GetProperty("clientName").GetString());
+    }
+
+    [Fact]
     public async Task Requests_need_a_valid_api_key()
     {
         using var app = new HarnessFactory();

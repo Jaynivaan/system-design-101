@@ -117,11 +117,15 @@ using (var scope = app.Services.CreateScope())
 app.Logger.LogInformation("Agent runner: {Runner}", useClaude ? $"Claude ({claudeOptions.Model})" : "scripted (set ANTHROPIC_API_KEY for Claude)");
 
 app.UseForwardedHeaders();
+// The dashboard (wwwroot/index.html) is served at "/". It only talks to the /v1 API with the
+// key the person signs in with, so it has no access the API doesn't already grant.
+app.UseDefaultFiles();
+app.UseStaticFiles();
 app.UseExceptionHandler();
 
 if (app.Environment.IsProduction() && string.IsNullOrEmpty(cfg["Harness:AdminKey"]))
     app.Logger.LogWarning("Harness:AdminKey is not set, so /admin/tenants is disabled. Set Harness__AdminKey to create tenants.");
-app.MapGet("/", () => Results.Ok(new { name = "Agency Harness", docs = "https://github.com/jaynivaan/system-design-101/tree/claude/system-design-agency-nuwwik/agency-harness", health = "/health/ready", mcp = "/mcp", api = "/v1" }));
+app.MapGet("/api", () => Results.Ok(new { name = "Agency Harness", docs = "https://github.com/jaynivaan/system-design-101/tree/claude/system-design-agency-nuwwik/agency-harness", health = "/health/ready", mcp = "/mcp", api = "/v1" }));
 app.UseCorrelationId();
 app.UseTenantAuth();
 app.UseRateLimiter();

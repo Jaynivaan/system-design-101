@@ -30,13 +30,13 @@ flowchart LR
 
 ```bash
 cd agency-harness
-dotnet test                                   # 21 tests: unit, HTTP integration, MCP
+dotnet test                                   # 22 tests: unit, HTTP integration, MCP
 cd src/AgencyHarness
 export ANTHROPIC_API_KEY=sk-ant-...           # optional; without it a scripted runner fakes the model
 ASPNETCORE_ENVIRONMENT=Development dotnet run --urls http://localhost:5077
 ```
 
-Then:
+Open http://localhost:5077 for the dashboard: sign in with your agency's API key to manage clients, queue jobs, watch the queue and read deliverables. Or use the API directly:
 
 ```bash
 B=http://localhost:5077
