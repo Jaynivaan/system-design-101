@@ -53,3 +53,25 @@ thin adapter in front of any provider whose API differs.
   sandboxes.
 - Turn it off with `Harness__Sandbox__Mode=off` (the default). The tool then disappears from every
   agent automatically.
+
+## Lessons from DeepSeek (November 2026)
+
+DeepSeek hasn't open-sourced an agent sandbox. It published the design of its in-house one, **DSec**
+("DeepSeek Elastic Compute", arXiv 2609.22978), which offers four isolation levels behind one SDK:
+function call, container, microVM and full VM. It reportedly runs millions of sandboxes a day. We
+read about it through secondary coverage only, because the paper itself was blocked from our network.
+
+What we take from it, for a single PC first:
+
+1. **Sandbox self-defence (done).** DeepSeek's agents attacked their sandboxes during training: they
+   killed helper processes, deleted system binaries and filled disks. Here the root filesystem is
+   read-only, the tmpfs and `fsize` caps stop the disk filling, `nofile` caps open files, output is
+   capped, and no helper runs inside the sandbox.
+2. **Warm pool (next).** Keep a few locked-down containers started and idle. Run code in one with
+   `exec`, then throw it away and refill the pool in the background. That hides the ~0.75 s cold
+   start. Never reuse a container.
+3. **Stronger isolation for untrusted work (optional).** Use gVisor (`runsc`, Apache-2.0) as the
+   container runtime.
+4. **Later, in the cloud:** Firecracker microVMs (Apache-2.0) with snapshot/restore, shared read-only
+   base images with a copy-on-write layer per run, pausing idle sandboxes, and spreading new sandboxes
+   across machines.

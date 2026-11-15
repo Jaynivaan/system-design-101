@@ -48,11 +48,16 @@ public class ContainerSandboxTests
             except OSError: print("ROOT:read-only")
             open("/work/out.txt", "w").write("ok"); print("WORK:" + open("/work/out.txt").read())
             print("UID:" + str(os.getuid()))
+            try:
+                with open("/work/big.bin", "wb") as f: f.write(b"x" * (80 * 1024 * 1024))
+                print("DISK:unbounded")
+            except OSError: print("DISK:capped")
             """, 30), default);
         Assert.Contains("NET:blocked", r.Stdout);
         Assert.Contains("ROOT:read-only", r.Stdout);
         Assert.Contains("WORK:ok", r.Stdout);
         Assert.Contains("UID:65534", r.Stdout);
+        Assert.DoesNotContain("DISK:unbounded", r.Stdout);   // capped by the tmpfs size and the fsize limit
     }
 
     [Fact]

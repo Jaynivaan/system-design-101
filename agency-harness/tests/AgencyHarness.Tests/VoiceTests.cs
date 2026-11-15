@@ -65,12 +65,18 @@ internal class FakeModel(params string[] tokens) : IResponseModel
     public async IAsyncEnumerable<string> RespondAsync(string systemPrompt, IReadOnlyList<ChatTurn> history, [EnumeratorCancellation] CancellationToken ct)
     {
         LastPrompt = systemPrompt;
-        foreach (var t in tokens)
+        var completed = false;
+        try
         {
-            try { if (DelayPerToken > TimeSpan.Zero) await Task.Delay(DelayPerToken, ct); }
-            catch (OperationCanceledException) { Cancelled = true; throw; }
-            yield return t;
+            foreach (var t in tokens)
+            {
+                try { if (DelayPerToken > TimeSpan.Zero) await Task.Delay(DelayPerToken, ct); }
+                catch (OperationCanceledException) { Cancelled = true; throw; }
+                yield return t;
+            }
+            completed = true;
         }
+        finally { if (!completed) Cancelled = true; }   // the consumer stopped early (e.g. barge-in while speaking)
     }
 }
 
@@ -301,7 +307,8 @@ public class CallSessionTests
         await GreetingPlayed(s, sink);
         Say(s);
         await Wait.Until(() => tts.Spoken.Count == 2);
-        AckAllMarks(s, sink);
+        await Wait.Until(() => !sink.Marks.IsEmpty);   // the hand-off line's mark has been sent…
+        AckAllMarks(s, sink);                           // …and is now "played", so the transfer can go ahead
         await Wait.Until(() => ctl.TransferredTo is not null);
         Assert.Equal("+19025550199", ctl.TransferredTo);
         var line = tts.Spoken.Last();

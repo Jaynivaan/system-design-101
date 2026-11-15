@@ -22,7 +22,8 @@ public class HarnessFactory : WebApplicationFactory<Program>
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
-        builder.UseSetting("ConnectionStrings:Harness", $"Data Source={_dbPath}");
+        // No pooling: tests run in parallel, and clearing a shared pool would close other tests' connections.
+        builder.UseSetting("ConnectionStrings:Harness", $"Data Source={_dbPath};Pooling=False");
         builder.UseSetting("Harness:RunWorkers", "false");
         builder.UseSetting("Harness:AdminKey", AdminKey);
         builder.UseSetting("Harness:ForceScriptedRunner", "true");
@@ -42,7 +43,6 @@ public class HarnessFactory : WebApplicationFactory<Program>
     protected override void Dispose(bool disposing)
     {
         base.Dispose(disposing);
-        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools();
         foreach (var f in new[] { _dbPath, _dbPath + "-wal", _dbPath + "-shm" })
             try { File.Delete(f); } catch { }
     }

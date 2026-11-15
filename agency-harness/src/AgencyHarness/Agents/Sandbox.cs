@@ -101,6 +101,10 @@ public class ContainerSandbox(SandboxOptions o) : ISandbox
                 ["NanoCpus"] = (long)(o.Cpus * 1_000_000_000),
                 ["PidsLimit"] = o.Pids,
                 ["CapDrop"] = new JsonArray("ALL"),
+                // Self-defence: an agent can't fill the disk or exhaust file handles (both seen in DeepSeek's RL sandboxes).
+                ["Ulimits"] = new JsonArray(
+                    new JsonObject { ["Name"] = "fsize", ["Soft"] = (long)o.TmpfsMb * 1024 * 1024, ["Hard"] = (long)o.TmpfsMb * 1024 * 1024 },
+                    new JsonObject { ["Name"] = "nofile", ["Soft"] = 256, ["Hard"] = 256 }),
                 ["SecurityOpt"] = new JsonArray("no-new-privileges"),
             },
         };
