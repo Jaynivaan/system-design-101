@@ -1,0 +1,17 @@
+// Put this in opencode.jsonc at your project root (or merge into your global OpenCode config).
+// Set the key first:  export AGENCY_HARNESS_API_KEY=ak_...
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "servers": {
+      "agency-harness": {
+        "type": "remote",
+        "url": "http://localhost:5077/mcp",
+        "oauth": false,
+        "headers": {
+          "X-Api-Key": "{env:AGENCY_HARNESS_API_KEY}"
+        }
+      }
+    }
+  }
+}

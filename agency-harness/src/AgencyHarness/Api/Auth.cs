@@ -34,16 +34,20 @@ public static class Auth
     /// so auth doesn't cost a DB round trip on every request.</summary>
     public static IApplicationBuilder UseTenantAuth(this IApplicationBuilder app) => app.Use(async (ctx, next) =>
     {
-        if (!ctx.Request.Path.StartsWithSegments("/v1"))
+        if (!ctx.Request.Path.StartsWithSegments("/v1") && !ctx.Request.Path.StartsWithSegments("/mcp"))
         {
             await next();
             return;
         }
 
+        // MCP clients commonly send "Authorization: Bearer <key>"; accept either form.
         var key = ctx.Request.Headers[ApiKeyHeader].FirstOrDefault();
+        if (string.IsNullOrEmpty(key) && ctx.Request.Headers.Authorization.FirstOrDefault() is { } authz
+            && authz.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+            key = authz["Bearer ".Length..].Trim();
         if (string.IsNullOrEmpty(key))
         {
-            await Results.Problem("Missing X-Api-Key header.", statusCode: 401).ExecuteAsync(ctx);
+            await Results.Problem("Missing API key: send X-Api-Key or Authorization: Bearer.", statusCode: 401).ExecuteAsync(ctx);
             return;
         }
 

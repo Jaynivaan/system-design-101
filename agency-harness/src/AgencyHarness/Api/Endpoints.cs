@@ -173,51 +173,19 @@ public static class Endpoints
         });
     }
 
-    private static async Task<IResult> CreateJobAsync(Guid projectId, CreateJobRequest req, HttpContext http,
-        HarnessDbContext db, Outbox outbox)
+    private static async Task<IResult> CreateJobAsync(Guid projectId, CreateJobRequest req, HttpContext http, HarnessService svc)
     {
-        var tenant = http.Tenant();
-        var errors = new Dictionary<string, string[]>();
-        if (!AgentRoster.TryGet(req.Role ?? "", out _)) errors["role"] = [$"Must be one of: {string.Join(", ", AgentRoster.Roles.Keys)}."];
-        if (string.IsNullOrWhiteSpace(req.Instructions)) errors["instructions"] = ["Required."];
-        else if (req.Instructions.Length > 20_000) errors["instructions"] = ["Max 20000 characters."];
-        if (errors.Count > 0) return Results.ValidationProblem(errors);
-
-        if (!await db.Projects.AnyAsync(p => p.Id == projectId && p.TenantId == tenant.Id)) return Results.NotFound();
-
-        // Idempotency-Key: same key + same body → same job; same key + different body → 422.
         var idemKey = http.Request.Headers["Idempotency-Key"].FirstOrDefault();
-        var requestHash = Security.Sha256($"{projectId}|{req.Role}|{req.Instructions}|{req.Priority}");
-        if (!string.IsNullOrEmpty(idemKey))
+        var r = await svc.QueueJobAsync(http.Tenant(), projectId, req.Role, req.Instructions, req.Priority, idemKey, http.RequestAborted);
+        return r.Outcome switch
         {
-            if (idemKey.Length > 128) return Results.Problem("Idempotency-Key too long.", statusCode: 400);
-            var prior = await db.IdempotencyKeys.AsNoTracking().FirstOrDefaultAsync(i => i.TenantId == tenant.Id && i.Key == idemKey);
-            if (prior is not null)
-                return prior.RequestHash == requestHash
-                    ? Results.Accepted($"/v1/jobs/{prior.ResourceId}", new { id = prior.ResourceId, replayed = true })
-                    : Results.Problem("Idempotency-Key reused with a different request body.", statusCode: 422);
-        }
-
-        var job = new AgentJob
-        {
-            TenantId = tenant.Id, ProjectId = projectId, AgentRole = req.Role!.ToLowerInvariant(),
-            Instructions = req.Instructions, Priority = Math.Clamp(req.Priority ?? 5, 0, 9), IdempotencyKey = idemKey,
+            QueueOutcome.Accepted => Results.Accepted($"/v1/jobs/{r.Job!.Id}", JobView(r.Job)),
+            QueueOutcome.Replayed => Results.Accepted($"/v1/jobs/{r.ExistingJobId}", new { id = r.ExistingJobId, replayed = true }),
+            QueueOutcome.Invalid => Results.ValidationProblem(r.Errors!),
+            QueueOutcome.NotFound => Results.NotFound(),
+            QueueOutcome.KeyConflict => Results.Problem(r.Message, statusCode: 422),
+            _ => Results.Problem(r.Message, statusCode: 409),
         };
-        db.Jobs.Add(job);
-        if (!string.IsNullOrEmpty(idemKey))
-            db.IdempotencyKeys.Add(new IdempotencyRecord { TenantId = tenant.Id, Key = idemKey, RequestHash = requestHash, ResourceId = job.Id });
-        outbox.Add(db, tenant.Id, "job.queued", new { jobId = job.Id, projectId, role = job.AgentRole });
-
-        try
-        {
-            await db.SaveChangesAsync();   // job + idempotency record + event commit atomically
-        }
-        catch (DbUpdateException) when (!string.IsNullOrEmpty(idemKey))
-        {
-            // Lost a race with a concurrent request using the same key.
-            return Results.Problem("A request with this Idempotency-Key is in progress; retry shortly.", statusCode: 409);
-        }
-        return Results.Accepted($"/v1/jobs/{job.Id}", JobView(job));
     }
 
     private static void MapAdmin(WebApplication app)
@@ -252,7 +220,7 @@ public static class Endpoints
     private static bool IsAllowedWebhook(string url, bool dev) =>
         Uri.TryCreate(url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || (dev && u.Scheme == Uri.UriSchemeHttp));
 
-    private static object JobView(AgentJob j) => new
+    internal static object JobView(AgentJob j) => new
     {
         j.Id, j.ProjectId, j.ParentJobId, role = j.AgentRole, j.Instructions, j.Priority,
         status = j.Status.ToString(), j.Attempts, j.MaxAttempts, j.NextAttemptAt,

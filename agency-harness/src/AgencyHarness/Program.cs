@@ -17,6 +17,8 @@ builder.Services.AddDbContext<HarnessDbContext>(o =>
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddMemoryCache();
 builder.Services.AddSingleton<ClientBriefCache>();
+builder.Services.AddScoped<AgencyHarness.Api.HarnessService>();
+builder.Services.AddHttpContextAccessor();
 builder.Services.AddSingleton<Outbox>();
 builder.Services.AddSingleton(_ => new CircuitBreaker(
     failureThreshold: cfg.GetValue("Harness:Circuit:FailureThreshold", 5),
@@ -79,6 +81,12 @@ builder.Services.AddRateLimiter(o =>
     };
 });
 
+// ---------- MCP: the same harness, for OpenCode, Claude Code, Cursor and other MCP clients ----------
+// Stateless Streamable HTTP: no server-side session, so any node behind a load balancer can answer.
+builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "agency-harness", Version = "1.0.0" })
+    .WithHttpTransport(o => o.Stateless = true)
+    .WithTools<HarnessMcpTools>();
+
 builder.Services.AddProblemDetails();
 builder.Logging.AddSimpleConsole(o => { o.IncludeScopes = true; o.SingleLine = true; });
 
@@ -99,6 +107,7 @@ app.UseCorrelationId();
 app.UseTenantAuth();
 app.UseRateLimiter();
 app.MapHarnessApi();
+app.MapMcp("/mcp").RequireRateLimiting("per-tenant");
 
 app.Run();
 

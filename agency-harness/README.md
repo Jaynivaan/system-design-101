@@ -30,7 +30,7 @@ flowchart LR
 
 ```bash
 cd agency-harness
-dotnet test                                   # 18 tests: unit + full HTTP integration
+dotnet test                                   # 21 tests: unit, HTTP integration, MCP
 cd src/AgencyHarness
 export ANTHROPIC_API_KEY=sk-ant-...           # optional; without it a scripted runner fakes the model
 ASPNETCORE_ENVIRONMENT=Development dotnet run --urls http://localhost:5077
@@ -59,6 +59,16 @@ curl -s -X POST $B/v1/projects/<projectId>/jobs -H "X-Api-Key: $K" -H 'Idempoten
 curl -s $B/v1/projects/<projectId> -H "X-Api-Key: $K"
 curl -s $B/v1/projects/<projectId>/deliverables -H "X-Api-Key: $K"
 curl -s $B/v1/events -H "X-Api-Key: $K"
+```
+
+## Use it from OpenCode, Claude Code, Cursor and other apps
+
+The harness is also an MCP server at `/mcp`, so coding agents can queue work, check jobs and pull
+deliverables directly. To connect, see **[docs/INTEGRATIONS.md](docs/INTEGRATIONS.md)**. Ready-made
+configs are in [`integrations/`](integrations/).
+
+```bash
+claude mcp add --transport http agency-harness http://localhost:5077/mcp --header "X-Api-Key: $AGENCY_HARNESS_API_KEY"
 ```
 
 ## API

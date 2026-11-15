@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "agency-harness": {
+      "url": "http://localhost:5077/mcp",
+      "headers": { "X-Api-Key": "${env:AGENCY_HARNESS_API_KEY}" }
+    }
+  }
+}
