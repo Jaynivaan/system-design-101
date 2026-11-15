@@ -162,3 +162,55 @@ and on the fallback rate.
 The phone number moves from AgentPhone's built-in agent to **Twilio**, which can stream raw call
 audio to the harness both ways. AgentPhone's hosted agent stays in place as the fallback until
 phase 1 is live.
+
+## Status (phase 1 built)
+
+Built and tested (36 automated tests, using fake models; no real call has gone through it yet):
+
+- **Twilio channel:** `POST /voice/twilio/incoming` checks Twilio's signature and answers with a two-way
+  media stream. `/voice/twilio/stream` takes the call audio. Each stream needs a one-time token tied to
+  that call, so nobody else can connect to it.
+- **Turn loop:** voice activity detection keeps running while the agent talks. Replies are spoken
+  sentence by sentence. Interruptions clear the carrier's buffer and cancel the model. History keeps only
+  what the caller actually heard, using Twilio playback marks.
+- **Language:** IndicConformer `/lid` runs on every utterance. The language switches on one confident
+  result or two in a row. Speech-to-text, the model prompt and the voice all follow the switch.
+- **Emotion:** a simple transcript-based detector for now (a model can replace it later). Tone hints go to
+  the model and the voice. Distress, or anger that keeps rising, leads to a spoken handoff line and then
+  a Twilio transfer to your mobile.
+- **Providers:**
+  - your LLM through any OpenAI-compatible server, with Claude as the backup
+  - your PC's IndicConformer (raw WAV + `?lang=ml`)
+  - your `voice_server` (`engine` per language)
+  - Gemini TTS for Malayalam
+
+  Every provider has its own circuit breaker and a fallback.
+- **After each call:** a `call.completed` event holds the transcript, languages, emotions, interruptions
+  and time-to-first-audio for each turn. It reaches the dashboard's event log and your webhook.
+
+## Setting it up
+
+1. **Twilio:** create an account, buy a Canadian number, and set its *A call comes in* webhook to
+   `https://<your-tunnel>/voice/twilio/incoming` (HTTP POST). In `harness.env`, add:
+   ```
+   Harness__Voice__Enabled=true
+   Harness__Voice__TenantId=<your agency id from /v1/me>
+   Harness__Voice__PublicBaseUrl=https://<your-tunnel>
+   Harness__Voice__Twilio__AccountSid=AC...
+   Harness__Voice__Twilio__AuthToken=...
+   Harness__Voice__TransferNumber=+1902...
+   GEMINI_API_KEY=...
+   ```
+2. **Reaching your models.** The sidecars on your PC listen on `127.0.0.1` only, and on this PC WSL
+   doesn't forward localhost, so the harness container can't reach them yet. Choose one:
+   - **Bind the sidecars to the WSL network address** (`172.24.224.1`). For Ollama set `OLLAMA_HOST`;
+     the two Python sidecars need a `--host` option, which they don't have yet. Then add a Windows
+     Firewall rule that allows only `172.24.224.0/20`. This keeps them off your home network and the
+     internet.
+   - **Or run the harness directly on Windows** (`dotnet run`) instead of in the container, so
+     `127.0.0.1` just works.
+3. **Response model.** There is no fine-tuned receptionist model yet. Until there is, point `CustomLlm`
+   at a small model served by Ollama or llama.cpp, or leave it empty and Claude answers. Note that
+   `gemma4:e4b` (6.6 GB) can't share your 8 GB GPU with the speech models during a call. See
+   [MODEL-OPTIONS.md](MODEL-OPTIONS.md) for options, and the training loop above for building the
+   real one from consented calls.

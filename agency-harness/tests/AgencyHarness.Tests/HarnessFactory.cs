@@ -17,6 +17,8 @@ public class HarnessFactory : WebApplicationFactory<Program>
     public const string AdminKey = "test-admin-key";
     private readonly string _dbPath = Path.Combine(Path.GetTempPath(), $"harness-test-{Guid.NewGuid():n}.db");
     public IAgentRunner? RunnerOverride { get; set; }
+    public Dictionary<string, string> Settings { get; } = new();
+    public Action<IServiceCollection>? ConfigureServices { get; set; }
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -24,9 +26,11 @@ public class HarnessFactory : WebApplicationFactory<Program>
         builder.UseSetting("Harness:RunWorkers", "false");
         builder.UseSetting("Harness:AdminKey", AdminKey);
         builder.UseSetting("Harness:ForceScriptedRunner", "true");
+        foreach (var (k, v) in Settings) builder.UseSetting(k, v);
         builder.ConfigureTestServices(s =>
         {
             s.AddSingleton(new WorkerOptions { RetryBase = TimeSpan.Zero, RetryMax = TimeSpan.Zero });
+            ConfigureServices?.Invoke(s);
             if (RunnerOverride is not null)
             {
                 s.RemoveAll<IAgentRunner>();

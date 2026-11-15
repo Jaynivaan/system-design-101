@@ -2,6 +2,7 @@ using System.Threading.RateLimiting;
 using AgencyHarness.Agents;
 using AgencyHarness.Api;
 using AgencyHarness.Infrastructure;
+using AgencyHarness.Voice;
 using AgencyHarness.Workers;
 using Anthropic;
 using Microsoft.EntityFrameworkCore;
@@ -101,6 +102,9 @@ builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "agency-harness
     .WithHttpTransport(o => o.Stateless = true)
     .WithTools<HarnessMcpTools>();
 
+// ---------- Voice engine (phone calls through your own models) ----------
+builder.AddVoice();
+
 builder.Services.AddProblemDetails();
 builder.Logging.AddSimpleConsole(o => { o.IncludeScopes = true; o.SingleLine = true; });
 
@@ -129,8 +133,10 @@ app.MapGet("/api", () => Results.Ok(new { name = "Agency Harness", docs = "https
 app.UseCorrelationId();
 app.UseTenantAuth();
 app.UseRateLimiter();
+app.UseWebSockets(new WebSocketOptions { KeepAliveInterval = TimeSpan.FromSeconds(20) });
 app.MapHarnessApi();
 app.MapMcp("/mcp").RequireRateLimiting("per-tenant");
+app.MapTwilioVoice();
 
 app.Run();
 
