@@ -20,7 +20,8 @@ public class WorkerOptions
 /// can drive it deterministically.
 /// </summary>
 public class JobProcessor(IServiceScopeFactory scopes, IAgentRunner runner, ToolRegistry registry,
-    ClientBriefCache briefs, Outbox outbox, WorkerOptions opts, TimeProvider clock, ILogger<JobProcessor> log)
+    ClientBriefCache briefs, Outbox outbox, WorkerOptions opts, TimeProvider clock, ILogger<JobProcessor> log,
+    SkillsAndLessons skills, QualityGate gate)
 {
     public async Task<bool> ProcessNextAsync(string workerId, CancellationToken ct)
     {
@@ -42,8 +43,13 @@ public class JobProcessor(IServiceScopeFactory scopes, IAgentRunner runner, Tool
 
             await EnforceBudgetAsync(db, job, ct);
 
+            // Skills and lessons that apply to this job go into the agent's instructions.
+            var learned = await skills.BuildAsync(db, job, role.Name, ct);
+            var tools = registry.For(role);
+            role = role with { SystemPrompt = role.SystemPrompt + learned.Prompt };
+
             var ctx = new ToolContext(db, job, briefs, outbox);
-            var result = await runner.RunAsync(role, ctx, registry.For(role),
+            var result = await runner.RunAsync(role, ctx, tools,
                 hbCt => queue.ExtendLeaseAsync(job.Id, workerId, opts.Lease, hbCt), ct);
 
             var now = clock.GetUtcNow();
@@ -61,8 +67,15 @@ public class JobProcessor(IServiceScopeFactory scopes, IAgentRunner runner, Tool
                 TenantId = job.TenantId, JobId = job.Id, Model = result.Model,
                 InputTokens = result.InputTokens, OutputTokens = result.OutputTokens, CostUsd = result.CostUsd,
             });
-            outbox.Add(db, job.TenantId, "job.succeeded", new { jobId = job.Id, job.ProjectId, role = job.AgentRole, summary = result.Summary, costUsd = result.CostUsd });
+            // Quality gate: check the work, and learn from anything it finds.
+            var check = await gate.CheckAsync(db, job, ct);
+            outbox.Add(db, job.TenantId, "job.succeeded", new
+            {
+                jobId = job.Id, job.ProjectId, role = job.AgentRole, summary = result.Summary, costUsd = result.CostUsd, model = result.Model,
+                quality = new { pass = check.Pass, score = check.Placeholder ? (int?)null : check.Score, notes = check.Notes },
+            });
             await SaveFencedAsync(db, job, ct);
+            await LearnFromGateAsync(db, job, check, learned.SkillIds, ct);
 
             Telemetry.JobsCompleted.Add(1, new KeyValuePair<string, object?>("role", job.AgentRole));
             log.LogInformation("Job succeeded in {Ms} ms, cost ${Cost}", sw.ElapsedMilliseconds, result.CostUsd);
@@ -90,6 +103,23 @@ public class JobProcessor(IServiceScopeFactory scopes, IAgentRunner runner, Tool
             Telemetry.JobDurationMs.Record(sw.Elapsed.TotalMilliseconds);
         }
         return true;
+    }
+
+    private async Task LearnFromGateAsync(HarnessDbContext db, AgentJob job, GateResult check, List<Guid> skillIds, CancellationToken ct)
+    {
+        try
+        {
+            if (check.Pass && !check.Placeholder && skillIds.Count > 0)
+                await db.Skills.Where(s => skillIds.Contains(s.Id)).ExecuteUpdateAsync(u => u.SetProperty(s => s.Passes, s => s.Passes + 1), ct);
+            if (check.Issues.Count == 0) return;
+            var clientId = await db.Projects.AsNoTracking().Where(p => p.Id == job.ProjectId).Select(p => (Guid?)p.ClientId).FirstOrDefaultAsync(ct);
+            foreach (var issue in check.Issues)
+                await SkillsAndLessons.LearnAsync(db, outbox, job.TenantId, clientId, job.AgentRole, issue.Lesson, "gate", job.Id, ct);
+        }
+        catch (Exception e) when (e is not OperationCanceledException)
+        {
+            log.LogWarning(e, "Couldn't record lessons for job {Job}", job.Id);   // learning must never fail a finished job
+        }
     }
 
     private async Task EnforceBudgetAsync(HarnessDbContext db, AgentJob job, CancellationToken ct)

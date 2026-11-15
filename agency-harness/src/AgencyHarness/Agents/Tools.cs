@@ -126,10 +126,10 @@ public class DelegateTaskTool : IAgentTool
     public const int MaxChildrenPerJob = 6;
 
     public string Name => "delegate_task";
-    public string Description => "Queues a task for a specialist agent on the same project. Roles: copywriter, seo, analyst, reviewer. The task runs asynchronously; you will not see its result.";
+    public string Description => "Queues a task for a specialist agent on the same project. Roles: copywriter, seo, geo, techseo, content, outreach, analyst, reviewer. The task runs asynchronously; you will not see its result.";
     public IReadOnlyDictionary<string, object> Properties => new Dictionary<string, object>
     {
-        ["role"] = new { type = "string", @enum = new[] { "copywriter", "seo", "analyst", "reviewer" } },
+        ["role"] = new { type = "string", @enum = new[] { "copywriter", "seo", "geo", "techseo", "content", "outreach", "analyst", "reviewer" } },
         ["instructions"] = new { type = "string", description = "Specific, self-contained instructions for the specialist" },
     };
     public string[] Required => ["role", "instructions"];
@@ -138,7 +138,7 @@ public class DelegateTaskTool : IAgentTool
     {
         var role = Input.Str(input, "role", 50).ToLowerInvariant();
         var instructions = Input.Str(input, "instructions", 20_000);
-        if (!AgentRoster.TryGet(role, out _) || role == "strategist")
+        if (!AgentRoster.TryGet(role, out _) || role is "strategist" or "planner")
             throw new ToolException($"Unknown or disallowed role '{role}'.");
 
         // Guardrail against runaway fan-out (a delegation loop could spend the whole budget).

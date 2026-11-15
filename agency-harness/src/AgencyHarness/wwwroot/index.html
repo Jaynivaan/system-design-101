@@ -125,6 +125,28 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
   padding: calc(16px + env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) 18px; display: flex; flex-direction: column; gap: 12px; }
 .kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 10px; font-size: 13px; margin: 0; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.agenda-card { background: var(--raise); border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 6px; text-align: left; width: 100%; }
+.agenda-card[aria-current="true"] { border-color: var(--accent); }
+.agenda-card .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.pill { font-size: 11px; font-weight: 600; border-radius: 999px; padding: 1px 8px; border: 1px solid var(--line); white-space: nowrap; }
+.pill.Running { color: var(--accent); border-color: var(--accent); } .pill.Done { color: var(--ok); border-color: var(--ok); }
+.pill.Planning, .pill.Paused, .pill.Reviewing { color: var(--warn); border-color: var(--warn); } .pill.Failed, .pill.Blocked { color: var(--crit); border-color: var(--crit); }
+.progress { height: 6px; background: var(--line); border-radius: 3px; overflow: hidden; display: flex; }
+.progress i { display: block; height: 100%; } .progress .d { background: var(--ok); } .progress .a { background: var(--accent); } .progress .f { background: var(--crit); }
+.swarm { display: inline-flex; gap: 3px; vertical-align: middle; } .swarm b { width: 9px; height: 9px; border-radius: 50%; background: var(--line); } .swarm b.on { background: var(--accent); }
+@media (prefers-reduced-motion: no-preference) { .swarm b.on { animation: pulse 1.4s infinite; } @keyframes pulse { 50% { opacity: .35; } } }
+.phases { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(200px, 1fr); gap: 10px; overflow-x: auto; padding-bottom: 4px; }
+.phase { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 10px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.tcard { background: var(--raise); border: 1px solid var(--line); border-left: 3px solid var(--muted); border-radius: 8px; padding: 8px 9px; display: flex; flex-direction: column; gap: 3px; text-align: left; width: 100%; }
+.tcard.Running { border-left-color: var(--accent); } .tcard.Reviewing { border-left-color: var(--warn); } .tcard.Done { border-left-color: var(--ok); }
+.tcard.Failed, .tcard.Blocked { border-left-color: var(--crit); }
+.tcard .k { font-family: var(--font-mono); font-size: 11px; color: var(--muted); }
+.tcard .n { font-size: 11px; color: var(--muted); }
+.skill { border: 1px solid var(--line); border-radius: 8px; background: var(--raise); }
+.skill + .skill, .lesson + .lesson { margin-top: 8px; }
+.skill summary { padding: 8px 10px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+.lesson { border: 1px solid var(--line); border-radius: 8px; background: var(--raise); padding: 8px 10px; display: flex; flex-direction: column; gap: 4px; }
+.bar2 { height: 4px; background: var(--line); border-radius: 2px; overflow: hidden; } .bar2 i { display: block; height: 100%; background: var(--accent); }
 .talk-head { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
 .talk-btn { flex: none; width: 92px; height: 92px; border-radius: 50%; border: 0; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 13px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 0 0 0 var(--accent-soft); transition: box-shadow .2s; }
@@ -193,7 +215,29 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
 
     <section class="col">
       <div class="row" style="justify-content:space-between"><h2 style="font-size:18px" id="board-title">Job queue</h2><span class="muted" id="board-sub" style="font-size:13px"></span></div>
+      <div class="roles" role="group" aria-label="View" id="view-toggle">
+        <button type="button" class="role-opt" data-view="queue" aria-pressed="true">Job queue</button>
+        <button type="button" class="role-opt" data-view="agendas" aria-pressed="false">Agendas &amp; swarms</button>
+      </div>
       <div class="lanes" id="lanes"></div>
+      <div id="agenda-view" hidden>
+        <div class="row" style="justify-content:space-between">
+          <span class="muted" style="font-size:13px">Paste a plan; a planner agent turns it into a task graph and a swarm of agents works through it.</span>
+          <button class="btn small primary" type="button" id="new-agenda">New agenda</button>
+        </div>
+        <form id="agenda-form" class="panel" hidden style="margin-top:10px">
+          <div class="field"><label class="label" for="ag-title">Agenda title</label><input id="ag-title" type="text" maxlength="160" placeholder="ZUNVI 30-day growth sprint" required></div>
+          <div class="field"><label class="label" for="ag-plan">Plan</label><textarea id="ag-plan" maxlength="30000" style="min-height:180px" placeholder="Paste the plan: goals, phases, deliverables…" required></textarea></div>
+          <div class="row" style="gap:16px;margin-top:10px">
+            <div class="field" style="min-width:140px"><label class="label" for="ag-swarm">Swarm size (agents at once)</label>
+              <select id="ag-swarm"><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option><option>6</option></select></div>
+            <label class="row" style="font-size:13px;gap:6px"><input type="checkbox" id="ag-review" checked> Reviewer checks every task</label>
+          </div>
+          <div class="row" style="margin-top:12px"><button class="btn primary" type="submit">Start agenda</button><button class="btn" type="button" id="ag-cancel">Cancel</button></div>
+        </form>
+        <div id="agendas" class="col" style="gap:10px;margin-top:12px"></div>
+        <div id="agenda-detail" style="margin-top:14px"></div>
+      </div>
     </section>
 
     <section class="col right">
@@ -204,10 +248,14 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
           <button class="tab" role="tab" data-tab="usage" aria-selected="false">Usage</button>
           <button class="tab" role="tab" data-tab="voice" aria-selected="false">Voice lab</button>
           <button class="tab" role="tab" data-tab="talk" aria-selected="false">Talk to Vaani</button>
+          <button class="tab" role="tab" data-tab="skills" aria-selected="false">Skills</button>
+          <button class="tab" role="tab" data-tab="learning" aria-selected="false">Learning</button>
         </div>
         <div id="pane-deliv"></div>
         <div id="pane-events" hidden><div class="events" id="events"></div></div>
         <div id="pane-usage" hidden></div>
+        <div id="pane-skills" hidden></div>
+        <div id="pane-learning" hidden></div>
         <div id="pane-talk" hidden>
           <div class="talk-head">
             <button class="talk-btn" type="button" id="talk-btn" aria-pressed="false"><span class="talk-dot"></span><span id="talk-label">Start talking</span></button>
@@ -383,11 +431,14 @@ function md(src) {
 }
 const openD = new Set();
 async function renderTab() {
-  for (const k of ["deliv", "events", "usage", "voice", "talk"]) { $(`[data-tab=${k}]`).setAttribute("aria-selected", String(k === S.tab)); $("#pane-" + k).hidden = k !== S.tab; }
+  for (const k of ["deliv", "events", "usage", "voice", "talk", "skills", "learning"]) { $(`[data-tab=${k}]`).setAttribute("aria-selected", String(k === S.tab)); $("#pane-" + k).hidden = k !== S.tab; }
   if (S.tab === "deliv") {
     $("#pane-deliv").innerHTML = S.delivs.length ? S.delivs.map(d => `<details class="deliv" data-d="${d.id}" ${openD.has(d.id) ? "open" : ""}>
       <summary><strong>${esc(d.title)}</strong><span class="muted" style="font-size:12px">${esc(d.kind)} · ${t(d.createdAt)}</span></summary>
-      <div class="md">${md(d.content)}</div><div class="row" style="padding:0 12px 12px"><button class="btn small" type="button" data-copy="${d.id}">Copy Markdown</button></div></details>`).join("")
+      <div class="md">${md(d.content)}</div><div class="row" style="padding:0 12px 12px"><button class="btn small" type="button" data-copy="${d.id}">Copy Markdown</button>
+        <button class="btn small" type="button" data-fb="${d.id}" data-rating="1" title="Good: tell the agents what to keep doing">👍</button>
+        <button class="btn small" type="button" data-fb="${d.id}" data-rating="-1" title="Needs work: tell the agents what to fix next time">👎</button>
+        <input type="text" class="fb-note" id="fb-${d.id}" placeholder="What to keep or fix next time (optional)" maxlength="300" style="flex:1;min-width:160px;font-size:12px;padding:5px 8px"></div></details>`).join("")
       : `<p class="muted" style="margin:0">Deliverables appear here when agents finish work on this project.</p>`;
   }
   if (S.tab === "events") {
@@ -396,6 +447,8 @@ async function renderTab() {
       || `<p class="muted" style="margin:0">No events yet.</p>`;
   }
   if (S.tab === "voice") loadVoiceLab();
+  if (S.tab === "skills") renderSkills();
+  if (S.tab === "learning") renderLearning();
   if (S.tab === "usage") {
     try {
       const rows = await api("/v1/usage");
@@ -427,7 +480,7 @@ function setSync(text, kind) { const c = $("#chip-sync"); c.querySelector(".dot"
 document.addEventListener("click", async e => {
   const b = e.target.closest("button, [data-close]"); if (!b) return;
   try {
-    if (b.dataset.project) { S.projectId = b.dataset.project; store.set("ah-project", S.projectId, true); renderProjects(); await Promise.all([loadBoard(), loadDelivs()]); }
+    if (b.dataset.project) { S.projectId = b.dataset.project; S.agendaId = null; store.set("ah-project", S.projectId, true); renderProjects(); await Promise.all([loadBoard(), loadDelivs()]); if (S.view === "agendas") await loadAgendas(); }
     else if (b.dataset.role) { S.role = b.dataset.role; renderRoles(); }
     else if (b.dataset.job) { S.drawer = b.dataset.job; renderDrawer(); }
     else if (b.hasAttribute("data-close")) { S.drawer = null; renderDrawer(); }
@@ -524,6 +577,137 @@ $("#speak-form").addEventListener("submit", async e => {
     $("#sp-status").textContent = ms ? `${secs}s of audio, made in ${(ms / 1000).toFixed(1)}s` : "";
   } catch (err) { if (err.message !== "unauthorized") $("#sp-status").textContent = err.message; }
   finally { btn.disabled = false; }
+});
+
+// ───── Agendas & swarms ─────
+S.view = "queue"; S.agendas = []; S.agendaId = null; S.agenda = null;
+function setView(v) {
+  S.view = v;
+  document.querySelectorAll("#view-toggle [data-view]").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.view === v)));
+  $("#lanes").hidden = v !== "queue"; $("#agenda-view").hidden = v !== "agendas";
+  if (v === "agendas") loadAgendas();
+}
+async function loadAgendas() {
+  if (!S.projectId) { $("#agendas").innerHTML = `<p class="muted">Pick a project first.</p>`; return; }
+  S.agendas = await api(`/v1/agendas?projectId=${S.projectId}`);
+  if (!S.agendas.some(a => a.id === S.agendaId)) S.agendaId = S.agendas[0]?.id ?? null;
+  renderAgendaList();
+  if (S.agendaId) { S.agenda = await api(`/v1/agendas/${S.agendaId}`); renderAgendaDetail(); } else $("#agenda-detail").innerHTML = "";
+}
+function swarmDots(active, size) { return `<span class="swarm" title="${active} of ${size} agents working">${Array.from({ length: size }, (_, i) => `<b class="${i < active ? "on" : ""}"></b>`).join("")}</span>`; }
+function progressBar(c) {
+  const t = Math.max(1, c.total);
+  return `<div class="progress" title="${c.done} done, ${c.active} working, ${c.failed} failed/blocked of ${c.total}"><i class="d" style="width:${100 * c.done / t}%"></i><i class="a" style="width:${100 * c.active / t}%"></i><i class="f" style="width:${100 * c.failed / t}%"></i></div>`;
+}
+function renderAgendaList() {
+  $("#agendas").innerHTML = S.agendas.length ? S.agendas.map(a => `<button type="button" class="agenda-card" data-agenda="${a.id}" aria-current="${a.id === S.agendaId}">
+      <span class="top"><strong>${esc(a.title)}</strong><span class="pill ${a.status}">${a.status}</span></span>
+      ${progressBar(a.counts)}
+      <span class="row muted" style="font-size:12px;gap:10px">${swarmDots(a.counts.active, a.swarmSize)}<span>${a.counts.done}/${a.counts.total} tasks done</span>${a.counts.revisions ? `<span>${a.counts.revisions} revisions</span>` : ""}${a.counts.failed ? `<span style="color:var(--crit)">${a.counts.failed} stuck</span>` : ""}</span>
+    </button>`).join("") : `<p class="muted" style="margin:0">No agendas yet. Start one with your plan, for example the ZUNVI 30-day growth sprint.</p>`;
+}
+function renderAgendaDetail() {
+  const d = S.agenda; if (!d) return;
+  const a = d.agenda;
+  const phases = [...new Set(d.tasks.map(t => t.phase))];
+  const byKey = Object.fromEntries(d.tasks.map(t => [t.key, t]));
+  const planner = d.planner ? `Planner: ${esc(d.planner.status)}${d.planner.model ? " · " + esc(d.planner.model) : ""}` : "";
+  $("#agenda-detail").innerHTML = `
+    <div class="row" style="justify-content:space-between;margin-bottom:8px">
+      <div class="col" style="gap:2px;min-width:0"><h2 style="font-size:16px">${esc(a.title)}</h2>
+        <span class="muted" style="font-size:12px">${a.status === "Planning" ? "The planner is turning your plan into tasks…" : planner}${a.lastError ? ` · <span style="color:var(--crit)">${esc(a.lastError)}</span>` : ""}</span></div>
+      <div class="row">
+        <label class="muted" style="font-size:12px" for="swarm-size">Swarm</label>
+        <select id="swarm-size" style="width:auto">${[1,2,3,4,5,6,8].map(n => `<option ${n === a.swarmSize ? "selected" : ""}>${n}</option>`).join("")}</select>
+        ${a.status === "Running" ? `<button class="btn small" type="button" data-agenda-act="pause">Pause</button>` : ""}
+        ${a.status === "Paused" ? `<button class="btn small primary" type="button" data-agenda-act="resume">Resume</button>` : ""}
+      </div>
+    </div>
+    ${d.tasks.length ? `<div class="phases">${phases.map(ph => `<div class="phase"><span class="label">${esc(ph)}</span>
+      ${d.tasks.filter(t => t.phase === ph).map(t => `<button type="button" class="tcard ${t.status}" data-task="${t.id}">
+        <span class="row" style="justify-content:space-between"><strong style="font-size:13px">${esc(t.title)}</strong><span class="pill ${t.status}">${t.status}</span></span>
+        <span class="k">${esc(t.key)} · ${esc(t.role)}${t.job?.model ? " · " + esc(t.job.model) : ""}</span>
+        ${t.dependsOn.length ? `<span class="n">after ${t.dependsOn.map(k => `<span style="color:${byKey[k]?.status === "Done" ? "var(--ok)" : "inherit"}">${esc(k)}</span>`).join(", ")}</span>` : ""}
+        ${t.revisions || t.qualityScore ? `<span class="n">${t.revisions ? `${t.revisions} revision${t.revisions > 1 ? "s" : ""}` : ""}${t.qualityScore ? ` · score ${t.qualityScore}/10` : ""}</span>` : ""}
+      </button>`).join("")}</div>`).join("")}</div>` : ""}
+    <div id="task-detail" style="margin-top:12px"></div>`;
+  if (S.taskId) renderTaskDetail();
+}
+function renderTaskDetail() {
+  const t = S.agenda?.tasks.find(x => x.id === S.taskId); const host = $("#task-detail");
+  if (!t || !host) return;
+  host.innerHTML = `<div class="panel">
+    <div class="row" style="justify-content:space-between"><strong>${esc(t.title)}</strong><span class="pill ${t.status}">${t.status}</span></div>
+    <dl class="kv" style="margin-top:8px">
+      <dt>Role</dt><dd>${esc(t.role)}${t.job?.model ? " · " + esc(t.job.model) : ""}</dd>
+      <dt>Depends on</dt><dd>${t.dependsOn.length ? t.dependsOn.map(esc).join(", ") : "nothing"}</dd>
+      <dt>Instructions</dt><dd>${esc(t.instructions)}</dd>
+      ${t.qualityNotes ? `<dt>Quality</dt><dd>${esc(t.qualityNotes)}</dd>` : ""}
+      ${t.summary ? `<dt>Summary</dt><dd>${esc(t.summary)}</dd>` : ""}
+    </dl>
+    <div class="row" style="margin-top:8px">
+      ${t.job ? `<button class="btn small" type="button" data-job="${t.job.id}">Open job &amp; deliverable</button>` : ""}
+      ${t.status === "Failed" || t.status === "Blocked" ? `<button class="btn small primary" type="button" data-task-retry="${t.id}">Retry</button>` : ""}
+    </div></div>`;
+}
+$("#new-agenda").addEventListener("click", () => { $("#agenda-form").hidden = false; $("#ag-title").focus(); });
+$("#ag-cancel").addEventListener("click", () => { $("#agenda-form").hidden = true; });
+$("#agenda-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  try {
+    const a = await api(`/v1/projects/${S.projectId}/agendas`, { method: "POST", body: JSON.stringify({ title: $("#ag-title").value, plan: $("#ag-plan").value, swarmSize: Number($("#ag-swarm").value), reviewGate: $("#ag-review").checked }) });
+    S.agendaId = a.id; e.target.reset(); e.target.hidden = true; toast("Agenda started. The planner is on it.");
+    await loadAgendas();
+  } catch (err) { toast(err.message); }
+});
+document.addEventListener("change", async e => {
+  if (e.target.id === "swarm-size" && S.agendaId) {
+    try { await api(`/v1/agendas/${S.agendaId}/swarm`, { method: "POST", body: JSON.stringify({ size: Number(e.target.value) }) }); toast(`Swarm size set to ${e.target.value}.`); await loadAgendas(); }
+    catch (err) { toast(err.message); }
+  }
+});
+
+// ───── Skills & learning ─────
+async function renderSkills() {
+  try {
+    const skills = await api("/v1/skills");
+    $("#pane-skills").innerHTML = `<p class="muted" style="margin:0 0 10px;font-size:12px">Playbooks the agents follow to avoid known mistakes. Each job gets the skills that match its role and task. "Pass rate" = jobs using the skill that then passed the quality checks.</p>` +
+      skills.map(s => `<details class="skill"><summary><span><strong>${esc(s.title)}</strong> <span class="pill">${esc(s.source)}</span>${s.active ? "" : ' <span class="pill Failed">off</span>'}</span>
+        <span class="muted mono" style="font-size:11px;white-space:nowrap">${s.uses} uses${s.passRate !== null ? ` · ${Math.round(s.passRate * 100)}% pass` : ""}</span></summary>
+        <div class="md"><p class="muted" style="font-size:12px">Roles: ${esc(s.roles)}${s.always ? " · always on" : ` · used when the task mentions: ${esc(s.triggers)}`} · v${s.version}</p>${md(s.body)}
+        ${s.editable ? `<button class="btn small" type="button" data-skill-toggle="${s.id}" data-active="${s.active}">${s.active ? "Turn off" : "Turn on"}</button>` : ""}</div></details>`).join("");
+  } catch (err) { $("#pane-skills").textContent = err.message; }
+}
+async function renderLearning() {
+  try {
+    const lessons = await api("/v1/lessons");
+    $("#pane-learning").innerHTML = `<p class="muted" style="margin:0 0 10px;font-size:12px">What the agents have learned from failed checks, reviews and your 👍/👎. The strongest lessons go into matching jobs; repeated lessons get stronger, unused ones fade. Promote one to make it a permanent skill.</p>` +
+      (lessons.length ? lessons.map(l => `<div class="lesson">
+        <span>${esc(l.text)}</span>
+        <div class="bar2" title="strength ${l.strength}"><i style="width:${Math.round(l.strength * 100)}%"></i></div>
+        <span class="row muted" style="font-size:11px;justify-content:space-between"><span>${esc(l.role)}${l.client ? " · " + esc(l.client) : ""} · from ${esc(l.source)} · seen ${l.seen}× · used ${l.uses}×</span>
+          <span class="row"><button class="btn small" type="button" data-promote="${l.id}">Make it a skill</button><button class="btn small" type="button" data-forget="${l.id}">Retire</button></span></span>
+      </div>`).join("") : `<p class="muted" style="margin:0">Nothing learned yet. Lessons appear when a quality check fails, a reviewer flags something, or you rate a deliverable.</p>`);
+  } catch (err) { $("#pane-learning").textContent = err.message; }
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  try {
+    if (b.dataset.view) setView(b.dataset.view);
+    else if (b.dataset.agenda) { S.agendaId = b.dataset.agenda; S.taskId = null; await loadAgendas(); }
+    else if (b.dataset.task) { S.taskId = b.dataset.task; renderTaskDetail(); $("#task-detail").scrollIntoView({ behavior: "smooth", block: "nearest" }); }
+    else if (b.dataset.taskRetry) { await api(`/v1/agendas/${S.agendaId}/tasks/${b.dataset.taskRetry}/retry`, { method: "POST" }); toast("Task back in line."); await loadAgendas(); }
+    else if (b.dataset.agendaAct) { await api(`/v1/agendas/${S.agendaId}/${b.dataset.agendaAct}`, { method: "POST" }); await loadAgendas(); }
+    else if (b.dataset.fb) {
+      const note = $(`#fb-${b.dataset.fb}`)?.value || "";
+      const r = await api(`/v1/deliverables/${b.dataset.fb}/feedback`, { method: "POST", body: JSON.stringify({ rating: Number(b.dataset.rating), note }) });
+      toast(r.learned ? "Thanks. The agents learned from that." : "Thanks. Add a note next time so the agents learn what to change.");
+      const input = $(`#fb-${b.dataset.fb}`); if (input) input.value = "";
+    }
+    else if (b.dataset.promote) { await api(`/v1/lessons/${b.dataset.promote}/promote`, { method: "POST" }); toast("Promoted to a skill."); renderLearning(); }
+    else if (b.dataset.forget) { await api(`/v1/lessons/${b.dataset.forget}`, { method: "DELETE" }); toast("Lesson retired."); renderLearning(); }
+    else if (b.dataset.skillToggle) { await api(`/v1/skills/${b.dataset.skillToggle}`, { method: "PUT", body: JSON.stringify({ active: b.dataset.active !== "true" }) }); renderSkills(); }
+  } catch (err) { if (err.message !== "unauthorized") toast(err.message); }
 });
 
 // ───── Talk to Vaani (browser voice, same engine as phone calls) ─────
@@ -669,6 +853,8 @@ async function poll() {
     await loadBoard();
     if (tick % 2 === 0) await loadEvents();
     if (tick % 4 === 0) { await loadDelivs(); await loadMe(); await loadHealth(); }
+    if (S.view === "agendas") await loadAgendas();
+    if (tick % 10 === 0 && S.tab === "learning") renderLearning();
     setSync("Live", "ok");
   } catch (err) { if (err.message !== "unauthorized" && Date.now() >= backoffUntil) setSync("Reconnecting…", "warn"); }
 }

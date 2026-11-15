@@ -45,6 +45,11 @@ builder.Services.AddSingleton<IAgentTool, GetClientBriefTool>();
 builder.Services.AddSingleton<IAgentTool, ListDeliverablesTool>();
 builder.Services.AddSingleton<IAgentTool, SaveDeliverableTool>();
 builder.Services.AddSingleton<IAgentTool, DelegateTaskTool>();
+builder.Services.AddSingleton<IAgentTool, AddAgendaTaskTool>();
+builder.Services.AddSingleton<IAgentTool, ListAgendaTasksTool>();
+builder.Services.AddSingleton<IAgentTool, SubmitReviewTool>();
+builder.Services.AddSingleton<SkillsAndLessons>();
+builder.Services.AddSingleton<QualityGate>();
 builder.Services.AddSingleton<ToolRegistry>();
 
 var claudeOptions = cfg.GetSection("Harness:Claude").Get<ClaudeOptions>() ?? new ClaudeOptions();
@@ -71,10 +76,14 @@ else builder.Services.AddSingleton<IAgentRunner, ScriptedAgentRunner>();
 // ---------- Workers ----------
 builder.Services.AddSingleton(cfg.GetSection("Harness:Worker").Get<WorkerOptions>() ?? new WorkerOptions());
 builder.Services.AddSingleton<JobProcessor>();
+builder.Services.AddSingleton(cfg.GetSection("Harness:Agendas").Get<AgendaOptions>() ?? new AgendaOptions());
+builder.Services.AddSingleton<AgendaScheduler>();
+builder.Services.AddSingleton(sp => new AgencyHarness.Api.AgendaOptionsView(sp.GetRequiredService<AgendaOptions>().MaxSwarmSize));
 builder.Services.AddHttpClient("webhooks", c => c.Timeout = TimeSpan.FromSeconds(10));
 if (cfg.GetValue("Harness:RunWorkers", true))
 {
     builder.Services.AddHostedService<AgentWorker>();
+    builder.Services.AddHostedService<AgendaWorker>();
     builder.Services.AddSingleton<OutboxDispatcher>();
     builder.Services.AddHostedService(sp => sp.GetRequiredService<OutboxDispatcher>());
 }
@@ -122,6 +131,8 @@ using (var scope = app.Services.CreateScope())
 {
     var db = scope.ServiceProvider.GetRequiredService<HarnessDbContext>();
     db.Database.EnsureCreated();   // swap for EF migrations before production
+    if (db.Database.IsSqlite()) SchemaSync.Apply(db);   // adds tables from newer versions to an existing database
+    BuiltinSkills.SeedAsync(db).GetAwaiter().GetResult();
     if (db.Database.IsSqlite())
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");   // readers don't block the writer
 }

@@ -56,6 +56,29 @@ public class ScriptedAgentRunner : IAgentRunner
         var brief = $"{b.Client}: {b.Brief}\n\n**Project:** {b.Project}. {b.ProjectGoal}";
         await heartbeat(ct);
 
+        if (tools.Any(t => t.Name == "add_agenda_task"))
+        {
+            // Placeholder plan so the swarm pipeline can be tried without a model.
+            var tasks = new[]
+            {
+                new { key = "audit", title = "Technical audit", role = "techseo", deps = Array.Empty<string>(), phase = "Phase 1" },
+                new { key = "content", title = "Core content", role = "content", deps = new[] { "audit" }, phase = "Phase 2" },
+                new { key = "geo-faqs", title = "AI-search FAQs", role = "geo", deps = new[] { "audit" }, phase = "Phase 2" },
+                new { key = "outreach", title = "Outreach drafts", role = "outreach", deps = new[] { "content", "geo-faqs" }, phase = "Phase 3" },
+            };
+            foreach (var t in tasks)
+                await Tool("add_agenda_task").ExecuteAsync(ctx, JsonSerializer.SerializeToElement(new
+                {
+                    t.key, t.title, t.role, instructions = $"{t.title} for: {ctx.Job.Instructions[..Math.Min(200, ctx.Job.Instructions.Length)]}",
+                    depends_on = t.deps, t.phase,
+                }), ct);
+        }
+        if (tools.Any(t => t.Name == "submit_review") && ctx.Db.AgendaTasks.Any(t => t.ReviewJobId == ctx.Job.Id))
+        {
+            await Tool("submit_review").ExecuteAsync(ctx, JsonSerializer.SerializeToElement(new { score = 8, issues = Array.Empty<string>() }), ct);
+            return new AgentRunResult("Scripted review: passed.", "scripted", 0, 0, 0m);
+        }
+
         if (role.Name == "strategist")
         {
             foreach (var r in new[] { "copywriter", "seo" })

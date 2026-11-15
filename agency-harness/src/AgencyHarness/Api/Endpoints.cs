@@ -40,6 +40,7 @@ public static class Endpoints
 
         AgencyHarness.Voice.VoiceLabEndpoints.MapVoiceLab(v1);
         AgencyHarness.Voice.TwilioVoiceEndpoints.MapWebVoiceTicket(v1);
+        v1.MapSwarm();
 
         v1.MapGet("/roles", () => Results.Ok(AgentRoster.Roles.Values.Select(r => new { r.Name, r.Effort, r.Tools })));
 
