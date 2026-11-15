@@ -63,6 +63,8 @@ function Connect-PodmanMachine {
   & $Cli info *> $null
   if ($LASTEXITCODE) { throw "Podman still can't reach its machine at $ip. See docs/HOSTING.md (Troubleshooting)." }
   Write-Host "Connected to the Podman machine at $ip (localhost forwarding is off on this PC)."
+  # Published ports won't be on localhost either, so check health on the machine's address directly.
+  if ($script:HostAddress -eq "localhost") { $script:HostAddress = $ip }
 }
 
 Connect-PodmanMachine
