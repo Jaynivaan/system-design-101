@@ -51,10 +51,22 @@ var claudeOptions = cfg.GetSection("Harness:Claude").Get<ClaudeOptions>() ?? new
 builder.Services.AddSingleton(claudeOptions);
 var useClaude = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY"))
                 && !cfg.GetValue("Harness:ForceScriptedRunner", false);
+var openModelOptions = cfg.GetSection("Harness:OpenModel").Get<OpenModelOptions>() ?? new OpenModelOptions();
+var useOpenModel = !useClaude && !string.IsNullOrEmpty(openModelOptions.BaseUrl)
+                && !cfg.GetValue("Harness:ForceScriptedRunner", false);
 if (useClaude)
 {
     builder.Services.AddSingleton(_ => new AnthropicClient());   // reads ANTHROPIC_API_KEY
     builder.Services.AddSingleton<IAgentRunner, ClaudeAgentRunner>();
+}
+else if (useOpenModel)
+{
+    // Free open-weight models (Ollama, llama.cpp, vLLM, LM Studio) through the OpenAI chat format.
+    builder.Services.AddSingleton(openModelOptions);
+    builder.Services.AddSingleton(sp => new OpenModelAgentRunner(
+        new HttpClient { Timeout = TimeSpan.FromSeconds(openModelOptions.TimeoutSeconds) }, openModelOptions,
+        sp.GetRequiredService<CircuitBreaker>(), sp.GetRequiredService<ILogger<OpenModelAgentRunner>>()));
+    builder.Services.AddSingleton<IAgentRunner>(sp => sp.GetRequiredService<OpenModelAgentRunner>());
 }
 else
 {
@@ -119,7 +131,9 @@ using (var scope = app.Services.CreateScope())
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");   // readers don't block the writer
 }
 
-app.Logger.LogInformation("Agent runner: {Runner}", useClaude ? $"Claude ({claudeOptions.Model})" : "scripted (set ANTHROPIC_API_KEY for Claude)");
+app.Logger.LogInformation("Agent runner: {Runner}", useClaude ? $"Claude ({claudeOptions.Model})"
+    : useOpenModel ? $"open model {openModelOptions.Model} at {openModelOptions.BaseUrl}"
+    : "scripted (set ANTHROPIC_API_KEY for Claude, or Harness__OpenModel__BaseUrl for a free local model)");
 
 app.UseForwardedHeaders();
 // The dashboard (wwwroot/index.html) is served at "/". It only talks to the /v1 API with the
