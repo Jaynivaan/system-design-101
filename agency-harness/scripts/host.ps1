@@ -43,9 +43,15 @@ function Connect-PodmanMachine {
   # localhostForwarding=false) the CLI's ssh connection to 127.0.0.1 never works, so we point it
   # at the machine's WSL address instead, reusing the port, user, socket and key it already has.
   & $Cli info *> $null; if ($LASTEXITCODE -eq 0) { return }
-  Write-Host "Podman isn't answering; starting its machine..."
-  & $Cli machine start $MachineName *> $null
-  & $Cli info *> $null; if ($LASTEXITCODE -eq 0) { return }
+  # Only try `machine start` when the machine isn't already running: on PCs where the CLI can't
+  # reach 127.0.0.1, start fails slowly (30-60 s) even though the machine is up.
+  $state = ""
+  try { $state = (& $Cli machine inspect $MachineName --format "{{.State}}" 2>$null | Out-String).Trim() } catch {}
+  if ($state -ne "running") {
+    Write-Host "Podman isn't answering; starting its machine..."
+    & $Cli machine start $MachineName *> $null
+    & $Cli info *> $null; if ($LASTEXITCODE -eq 0) { return }
+  }
   $ip = Get-MachineIp
   if (-not $ip) { throw "Podman can't reach its machine and its WSL address wasn't found. Try: $Cli machine start" }
   try { $conns = & $Cli system connection list --format json | ConvertFrom-Json } catch { $conns = @() }
@@ -90,7 +96,7 @@ Write-Host @"
 Agency Harness is running at http://${HostAddress}:$Port  (MCP: http://${HostAddress}:$Port/mcp)
 Dashboard: open that address in a browser and sign in with your agency's API key.
 
-Create your agency's API key (shown once, save it). Your admin key is the Harness__AdminKey line in $EnvFile:
+Create your agency's API key (shown once, save it). Your admin key is the Harness__AdminKey line in ${EnvFile}:
   `$admin = ((Get-Content $EnvFile | Where-Object { `$_ -like 'Harness__AdminKey=*' }) -split '=', 2)[1]
   Invoke-RestMethod -Method Post http://${HostAddress}:$Port/admin/tenants -Headers @{ 'X-Admin-Key' = `$admin } -ContentType 'application/json' -Body '{"name":"My Agency"}'
 
