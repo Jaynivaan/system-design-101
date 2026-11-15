@@ -38,6 +38,8 @@ public static class Endpoints
             return Results.Ok(new { t.Id, t.Name, t.RateLimitPerMinute, t.MonthlyBudgetUsd, monthSpendUsd = spent, t.WebhookUrl });
         });
 
+        AgencyHarness.Voice.VoiceLabEndpoints.MapVoiceLab(v1);
+
         v1.MapGet("/roles", () => Results.Ok(AgentRoster.Roles.Values.Select(r => new { r.Name, r.Effort, r.Tools })));
 
         // ---- Clients ----

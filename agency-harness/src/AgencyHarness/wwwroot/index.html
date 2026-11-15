@@ -188,10 +188,34 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
           <button class="tab" role="tab" data-tab="deliv" aria-selected="true">Deliverables</button>
           <button class="tab" role="tab" data-tab="events" aria-selected="false">Events</button>
           <button class="tab" role="tab" data-tab="usage" aria-selected="false">Usage</button>
+          <button class="tab" role="tab" data-tab="voice" aria-selected="false">Voice lab</button>
         </div>
         <div id="pane-deliv"></div>
         <div id="pane-events" hidden><div class="events" id="events"></div></div>
         <div id="pane-usage" hidden></div>
+        <div id="pane-voice" hidden>
+          <form id="speak-form" class="col" style="gap:10px">
+            <div class="field"><label class="label" for="sp-text">Line to speak</label>
+              <textarea id="sp-text" maxlength="500">അയ്യോ, അഭിനന്ദനങ്ങൾ! നിങ്ങൾക്ക് ഒരു വർഷത്തേക്കുള്ള പഴംപൊരി സമ്മാനം കിട്ടിയിരിക്കുന്നു!</textarea></div>
+            <div class="field"><span class="label">Tone</span>
+              <div class="roles" id="sp-tones">
+                <button type="button" class="role-opt" data-tone="Say this excitedly, like a cheerful Kerala TV game show host" aria-pressed="true">excited</button>
+                <button type="button" class="role-opt" data-tone="Say warmly and naturally, like a friendly Kerala receptionist" aria-pressed="false">warm</button>
+                <button type="button" class="role-opt" data-tone="Say gently and calmly" aria-pressed="false">calm</button>
+                <button type="button" class="role-opt" data-tone="" aria-pressed="false">plain</button>
+              </div></div>
+            <div class="row" style="gap:10px">
+              <div class="field" style="flex:1;min-width:110px"><label class="label" for="sp-voice">Voice</label>
+                <select id="sp-voice"><option>Kore</option><option>Aoede</option><option>Leda</option><option>Puck</option><option>Charon</option><option>Zephyr</option><option>Fenrir</option><option>Sulafat</option></select></div>
+              <div class="field" style="flex:1;min-width:110px"><label class="label" for="sp-lang">Language</label>
+                <select id="sp-lang"><option value="ml">Malayalam</option><option value="en">English</option><option value="fr">French</option><option value="hi">Hindi</option><option value="ta">Tamil</option></select></div>
+              <div class="field" style="flex:1;min-width:110px"><label class="label" for="sp-engine">Engine</label><select id="sp-engine"><option value="gemini">gemini</option></select></div>
+            </div>
+            <div class="row"><button class="btn primary" type="submit" id="sp-btn">Speak</button><span class="muted" id="sp-status" style="font-size:12px" aria-live="polite"></span></div>
+          </form>
+          <div style="margin-top:16px"><span class="label">Sample clips</span><div id="samples" style="margin-top:6px"></div></div>
+          <audio id="player" controls style="width:100%;margin-top:12px" hidden></audio>
+        </div>
       </div>
     </section>
   </main>
@@ -321,7 +345,7 @@ function md(src) {
 }
 const openD = new Set();
 async function renderTab() {
-  for (const k of ["deliv", "events", "usage"]) { $(`[data-tab=${k}]`).setAttribute("aria-selected", String(k === S.tab)); $("#pane-" + k).hidden = k !== S.tab; }
+  for (const k of ["deliv", "events", "usage", "voice"]) { $(`[data-tab=${k}]`).setAttribute("aria-selected", String(k === S.tab)); $("#pane-" + k).hidden = k !== S.tab; }
   if (S.tab === "deliv") {
     $("#pane-deliv").innerHTML = S.delivs.length ? S.delivs.map(d => `<details class="deliv" data-d="${d.id}" ${openD.has(d.id) ? "open" : ""}>
       <summary><strong>${esc(d.title)}</strong><span class="muted" style="font-size:12px">${esc(d.kind)} · ${t(d.createdAt)}</span></summary>
@@ -333,6 +357,7 @@ async function renderTab() {
     $("#events").innerHTML = S.events.map(e => `<div class="ev"><span class="muted">#${e.id}</span><span><span class="k ${tone(e.eventType)}">${esc(e.eventType)}</span>${e.delivered ? "" : ' <span class="muted">(webhook pending)</span>'}<br><span class="d">${esc(JSON.stringify(e.payload?.data ?? e.payload))}</span></span></div>`).join("")
       || `<p class="muted" style="margin:0">No events yet.</p>`;
   }
+  if (S.tab === "voice") loadVoiceLab();
   if (S.tab === "usage") {
     try {
       const rows = await api("/v1/usage");
@@ -398,6 +423,57 @@ $("#job-form").addEventListener("submit", async e => {
     $("#job-result").textContent = `Queued ${S.role} job ${r.id.slice(0, 8)}.`; $("#ins").value = "";
     await loadBoard();
   } catch (err) { $("#job-result").textContent = err.message; }
+  finally { btn.disabled = false; }
+});
+
+// ───── Voice lab ─────
+let lastUrl = null;
+function play(blob, label) {
+  if (lastUrl) URL.revokeObjectURL(lastUrl);
+  lastUrl = URL.createObjectURL(blob);
+  const p = $("#player"); p.hidden = false; p.src = lastUrl; p.title = label;
+  p.play().catch(() => toast("Tap play to listen."));
+}
+async function fetchAudio(path, opts = {}) {
+  const res = await fetch(path, { ...opts, headers: { "X-Api-Key": KEY, ...(opts.headers || {}) } });
+  if (res.status === 401) { signOut("Your key was not accepted. Sign in again."); throw new Error("unauthorized"); }
+  if (!res.ok) { let msg = `Request failed (${res.status}).`; try { const b = await res.json(); msg = b.detail || b.title || msg; } catch {} throw new Error(msg); }
+  return res;
+}
+let labLoaded = false;
+async function loadVoiceLab() {
+  try {
+    if (!labLoaded) {
+      const e = await api("/v1/voice/engines");
+      $("#sp-engine").innerHTML = e.engines.map(x => `<option value="${esc(x)}">${esc(x)}</option>`).join("");
+      labLoaded = true;
+    }
+    const files = await api("/v1/voice/samples");
+    $("#samples").innerHTML = files.length ? files.map(f => `<div class="row" style="justify-content:space-between;padding:6px 0;border-bottom:1px dashed var(--line)">
+        <span class="mono" style="font-size:12px;overflow-wrap:anywhere;min-width:0;flex:1">${esc(f.name)}</span>
+        <button class="btn small" type="button" data-sample="${esc(f.name)}">Play</button></div>`).join("")
+      : `<p class="muted" style="margin:0">No sample clips yet. Clips copied into the harness's voice-samples folder appear here.</p>`;
+  } catch (err) { if (err.message !== "unauthorized") $("#samples").textContent = err.message; }
+}
+document.addEventListener("click", async e => {
+  const b = e.target.closest("button"); if (!b) return;
+  if (b.dataset.tone !== undefined) { document.querySelectorAll("#sp-tones .role-opt").forEach(x => x.setAttribute("aria-pressed", String(x === b))); }
+  if (b.dataset.sample) {
+    try { b.disabled = true; const r = await fetchAudio(`/v1/voice/samples/${encodeURIComponent(b.dataset.sample)}`); play(await r.blob(), b.dataset.sample); }
+    catch (err) { if (err.message !== "unauthorized") toast(err.message); } finally { b.disabled = false; }
+  }
+});
+$("#speak-form").addEventListener("submit", async e => {
+  e.preventDefault();
+  const btn = $("#sp-btn"); btn.disabled = true; $("#sp-status").textContent = "Speaking…";
+  const tone = document.querySelector("#sp-tones [aria-pressed=true]")?.dataset.tone || "";
+  try {
+    const r = await fetchAudio("/v1/voice/preview", { method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text: $("#sp-text").value, language: $("#sp-lang").value, voice: $("#sp-voice").value, style: tone, engine: $("#sp-engine").value }) });
+    const ms = r.headers.get("X-Synthesis-Ms"), secs = r.headers.get("X-Audio-Seconds");
+    play(await r.blob(), "preview");
+    $("#sp-status").textContent = ms ? `${secs}s of audio, made in ${(ms / 1000).toFixed(1)}s` : "";
+  } catch (err) { if (err.message !== "unauthorized") $("#sp-status").textContent = err.message; }
   finally { btn.disabled = false; }
 });
 

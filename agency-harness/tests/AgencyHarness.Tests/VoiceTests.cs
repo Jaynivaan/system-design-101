@@ -409,3 +409,55 @@ public class TwilioEndpointTests
     }
 }
 
+
+public class VoiceLabTests
+{
+    private class FakePreview : IVoicePreview
+    {
+        public (string Engine, string Text, string Lang, string? Voice, string? Style)? Last;
+        public IReadOnlyList<string> Engines => ["gemini"];
+        public Task<PcmAudio> SpeakAsync(string engine, string text, string language, string? voice, string? style, CancellationToken ct)
+        { Last = (engine, text, language, voice, style); return Task.FromResult(Tone.Audio(1.5)); }
+    }
+
+    [Fact]
+    public async Task Lists_and_serves_sample_clips_but_nothing_outside_the_folder()
+    {
+        var dir = Directory.CreateTempSubdirectory("voice-samples-").FullName;
+        File.WriteAllBytes(Path.Combine(dir, "ml-L1-excited-Kore.wav"), Wav.Write(Tone.Audio(0.5)));
+        File.WriteAllText(Path.Combine(dir, "notes.txt"), "not audio");
+        using var app = new HarnessFactory();
+        app.Settings["Harness:VoiceLab:SamplesDir"] = dir;
+        var (c, _) = await app.NewTenantAsync();
+
+        var list = JsonDocument.Parse(await c.GetStringAsync("/v1/voice/samples")).RootElement;
+        Assert.Equal(1, list.GetArrayLength());
+        Assert.Equal("ml-L1-excited-Kore.wav", list[0].GetProperty("name").GetString());
+
+        var wav = await c.GetAsync("/v1/voice/samples/ml-L1-excited-Kore.wav");
+        Assert.Equal("audio/wav", wav.Content.Headers.ContentType?.MediaType);
+        Assert.Equal(0.5, Wav.Read(await wav.Content.ReadAsByteArrayAsync()).Seconds, 2);
+
+        Assert.Equal(HttpStatusCode.NotFound, (await c.GetAsync("/v1/voice/samples/notes.txt")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound, (await c.GetAsync("/v1/voice/samples/..%2Fharness.db")).StatusCode);
+        Assert.Equal(HttpStatusCode.Unauthorized, (await app.CreateClient().GetAsync("/v1/voice/samples")).StatusCode);
+    }
+
+    [Fact]
+    public async Task Preview_speaks_a_line_with_the_chosen_voice_and_tone()
+    {
+        var fake = new FakePreview();
+        using var app = new HarnessFactory { ConfigureServices = s => { s.RemoveAll<IVoicePreview>(); s.AddSingleton<IVoicePreview>(fake); } };
+        var (c, _) = await app.NewTenantAsync();
+        var resp = await c.PostAsync("/v1/voice/preview", new StringContent(
+            JsonSerializer.Serialize(new { text = "നമസ്കാരം!", language = "ml", voice = "Aoede", style = "Say warmly" }), Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.OK, resp.StatusCode);
+        Assert.Equal(1.5, Wav.Read(await resp.Content.ReadAsByteArrayAsync()).Seconds, 1);
+        Assert.Equal(("gemini", "നമസ്കാരം!", "ml", "Aoede", "Say warmly"), fake.Last);
+        Assert.True(resp.Headers.Contains("X-Synthesis-Ms"));
+
+        var tooLong = await c.PostAsync("/v1/voice/preview", new StringContent(
+            JsonSerializer.Serialize(new { text = new string('x', 501) }), Encoding.UTF8, "application/json"));
+        Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
+    }
+}

@@ -16,6 +16,7 @@ USER app
 ENV ASPNETCORE_URLS=http://+:8080 \
     ASPNETCORE_ENVIRONMENT=Production \
     ConnectionStrings__Harness="Data Source=/data/harness.db" \
+    Harness__VoiceLab__SamplesDir=/data/voice-samples \
     DOTNET_CLI_TELEMETRY_OPTOUT=1
 EXPOSE 8080
 VOLUME ["/data"]

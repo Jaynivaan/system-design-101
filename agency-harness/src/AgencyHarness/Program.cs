@@ -104,6 +104,7 @@ builder.Services.AddMcpServer(o => o.ServerInfo = new() { Name = "agency-harness
 
 // ---------- Voice engine (phone calls through your own models) ----------
 builder.AddVoice();
+builder.AddVoiceLab();
 
 builder.Services.AddProblemDetails();
 builder.Logging.AddSimpleConsole(o => { o.IncludeScopes = true; o.SingleLine = true; });
