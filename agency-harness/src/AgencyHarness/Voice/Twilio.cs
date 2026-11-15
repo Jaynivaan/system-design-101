@@ -2,6 +2,7 @@ using System.Net.WebSockets;
 using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
+using AgencyHarness.Api;
 using AgencyHarness.Infrastructure;
 
 namespace AgencyHarness.Voice;
@@ -130,8 +131,11 @@ public class TwilioCallControl(HttpClient http, TwilioOptions o) : ICallControl
 }
 
 /// <summary>Writes Twilio Media Stream messages back over the WebSocket (one writer at a time).</summary>
-public class TwilioSink(WebSocket ws, string streamSid) : IVoiceSink
+public class TwilioSink(WebSocket ws, string streamSid, bool sendTranscripts = false) : IVoiceSink, ITranscriptSink
 {
+    public Task TranscriptAsync(string role, string text, string language, string? emotion, bool interrupted, CancellationToken ct) =>
+        sendTranscripts ? SendAsync(new { @event = "transcript", role, text, language, emotion, interrupted }, ct) : Task.CompletedTask;
+
     private readonly SemaphoreSlim _send = new(1, 1);
 
     public Task SendAudioAsync(byte[] mulaw20ms, CancellationToken ct) =>
@@ -179,10 +183,31 @@ public static class TwilioVoiceEndpoints
         });
 
         // 2. Twilio connects here and streams the call audio both ways.
-        app.Map("/voice/twilio/stream", async (HttpContext http, VoiceOptions o, StreamTokens tokens, VoiceProviders providers,
+        app.Map("/voice/twilio/stream", (HttpContext http, VoiceOptions o, StreamTokens tokens, VoiceProviders providers,
             TimeProvider clock, ILoggerFactory lf, IServiceScopeFactory scopes, Outbox outbox) =>
+            RunStreamAsync(http, o, tokens, providers, clock, lf, scopes, outbox, web: false));
+
+        // 3. "Talk to Vaani" in the dashboard: the browser speaks the same media-stream protocol.
+        app.Map("/voice/web/stream", (HttpContext http, VoiceOptions o, StreamTokens tokens, VoiceProviders providers,
+            TimeProvider clock, ILoggerFactory lf, IServiceScopeFactory scopes, Outbox outbox) =>
+            RunStreamAsync(http, o, tokens, providers, clock, lf, scopes, outbox, web: true));
+    }
+
+    /// <summary>One-time pass for a browser conversation, issued to a signed-in agency (POST /v1/voice/web/ticket).</summary>
+    public static void MapWebVoiceTicket(this RouteGroupBuilder v1) =>
+        v1.MapPost("/voice/web/ticket", (HttpContext http, StreamTokens tokens, TimeProvider clock) =>
         {
-            if (!o.Enabled || !http.WebSockets.IsWebSocketRequest) { http.Response.StatusCode = 400; return; }
+            var id = $"web-{http.Tenant().Id:N}-{Guid.NewGuid():N}";
+            return Results.Ok(new { id, token = tokens.Issue(id, clock.GetUtcNow()) });
+        });
+
+    private static readonly System.Collections.Concurrent.ConcurrentDictionary<string, DateTimeOffset> UsedTickets = new();
+
+    private static async Task RunStreamAsync(HttpContext http, VoiceOptions o, StreamTokens tokens, VoiceProviders providers,
+        TimeProvider clock, ILoggerFactory lf, IServiceScopeFactory scopes, Outbox outbox, bool web)
+    {
+        {
+            if ((!web && !o.Enabled) || !http.WebSockets.IsWebSocketRequest) { http.Response.StatusCode = 400; return; }
             var log = lf.CreateLogger("Voice");
             using var ws = await http.WebSockets.AcceptWebSocketAsync();
             CallSession? session = null;
@@ -204,13 +229,17 @@ public static class TwilioVoiceEndpoints
                             streamSid = start.GetProperty("streamSid").GetString()!;
                             callSid = start.GetProperty("callSid").GetString()!;
                             var token = start.TryGetProperty("customParameters", out var cp) && cp.TryGetProperty("token", out var t) ? t.GetString() : null;
-                            if (!tokens.Validate(token, callSid, clock.GetUtcNow()))
+                            bool isWebId = callSid.StartsWith("web-", StringComparison.Ordinal);
+                            bool firstUse = UsedTickets.TryAdd(callSid, clock.GetUtcNow());   // each pass works once
+                            foreach (var old in UsedTickets.Where(kv => kv.Value < clock.GetUtcNow().AddMinutes(-10)).Select(kv => kv.Key).ToList())
+                                UsedTickets.TryRemove(old, out _);
+                            if (!tokens.Validate(token, callSid, clock.GetUtcNow()) || isWebId != web || (web && !firstUse))
                             {
                                 log.LogWarning("Rejected media stream for {Call}: bad or expired token", callSid);
                                 await ws.CloseAsync(WebSocketCloseStatus.PolicyViolation, "unauthorized", CancellationToken.None);
                                 return;
                             }
-                            session = new CallSession(callSid, new TwilioSink(ws, streamSid), providers, o, log);
+                            session = new CallSession(callSid, new TwilioSink(ws, streamSid, sendTranscripts: web), providers, o, log);
                             log.LogInformation("Call {Call} connected", callSid);
                             await session.StartAsync();
                             break;
@@ -237,7 +266,7 @@ public static class TwilioVoiceEndpoints
                     await RecordCallAsync(scopes, outbox, o, callSid, started, clock.GetUtcNow(), session);
                 }
             }
-        });
+        }
     }
 
     private static async Task<string?> ReceiveTextAsync(WebSocket ws, byte[] buffer, CancellationToken ct)
@@ -256,7 +285,11 @@ public static class TwilioVoiceEndpoints
     private static async Task RecordCallAsync(IServiceScopeFactory scopes, Outbox outbox, VoiceOptions o, string callSid,
         DateTimeOffset started, DateTimeOffset ended, CallSession session)
     {
-        if (o.TenantId is not { } tenantId) return;
+        Guid tenantId;
+        if (callSid.StartsWith("web-", StringComparison.Ordinal) && callSid.Length > 36 && Guid.TryParseExact(callSid[4..36], "N", out var webTenant))
+            tenantId = webTenant;
+        else if (o.TenantId is { } configured) tenantId = configured;
+        else return;
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<HarnessDbContext>();
         var turns = session.Turns;

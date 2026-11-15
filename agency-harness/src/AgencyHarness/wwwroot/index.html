@@ -125,6 +125,19 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
   padding: calc(16px + env(safe-area-inset-top, 0px)) max(18px, env(safe-area-inset-right, 0px)) calc(16px + env(safe-area-inset-bottom, 0px)) 18px; display: flex; flex-direction: column; gap: 12px; }
 .kv { display: grid; grid-template-columns: 110px minmax(0, 1fr); gap: 4px 10px; font-size: 13px; margin: 0; }
 .kv dt { color: var(--muted); } .kv dd { margin: 0; overflow-wrap: anywhere; }
+.talk-head { display: flex; gap: 14px; align-items: center; margin-bottom: 12px; }
+.talk-btn { flex: none; width: 92px; height: 92px; border-radius: 50%; border: 0; background: var(--accent); color: var(--on-accent); font-weight: 600; font-size: 13px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 6px; box-shadow: 0 0 0 0 var(--accent-soft); transition: box-shadow .2s; }
+.talk-btn[aria-pressed="true"] { background: var(--crit); }
+.talk-btn .talk-dot { width: 14px; height: 14px; border-radius: 50%; background: var(--on-accent); }
+.talk-btn.speaking { box-shadow: 0 0 0 10px var(--accent-soft); }
+.talk-btn.listening { box-shadow: 0 0 0 6px var(--ok-soft); }
+@media (prefers-reduced-motion: reduce) { .talk-btn { transition: none; } }
+.transcript { display: flex; flex-direction: column; gap: 8px; max-height: 420px; overflow-y: auto; }
+.bubble { border-radius: 10px; padding: 8px 11px; max-width: 92%; font-size: 14px; overflow-wrap: anywhere; }
+.bubble.user { align-self: flex-end; background: var(--accent); color: var(--on-accent); }
+.bubble.assistant { align-self: flex-start; background: var(--raise); border: 1px solid var(--line); }
+.bubble .meta { display: block; font-size: 10px; opacity: .75; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
 .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(18px + env(safe-area-inset-bottom, 0px)); background: var(--ink); color: var(--bg); padding: 8px 14px; border-radius: 8px; font-size: 13px; z-index: 30; max-width: calc(100% - 32px); }
 </style>
 </head>
@@ -189,10 +202,21 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
           <button class="tab" role="tab" data-tab="events" aria-selected="false">Events</button>
           <button class="tab" role="tab" data-tab="usage" aria-selected="false">Usage</button>
           <button class="tab" role="tab" data-tab="voice" aria-selected="false">Voice lab</button>
+          <button class="tab" role="tab" data-tab="talk" aria-selected="false">Talk to Vaani</button>
         </div>
         <div id="pane-deliv"></div>
         <div id="pane-events" hidden><div class="events" id="events"></div></div>
         <div id="pane-usage" hidden></div>
+        <div id="pane-talk" hidden>
+          <div class="talk-head">
+            <button class="talk-btn" type="button" id="talk-btn" aria-pressed="false"><span class="talk-dot"></span><span id="talk-label">Start talking</span></button>
+            <div class="col" style="gap:2px;min-width:0">
+              <strong id="talk-state">Vaani is ready</strong>
+              <span class="muted" style="font-size:12px" id="talk-hint">Speak Malayalam, English or mix them. Interrupt her any time. Headphones work best.</span>
+            </div>
+          </div>
+          <div class="transcript" id="transcript" aria-live="polite"></div>
+        </div>
         <div id="pane-voice" hidden>
           <form id="speak-form" class="col" style="gap:10px">
             <div class="field"><label class="label" for="sp-text">Line to speak</label>
@@ -349,7 +373,7 @@ function md(src) {
 }
 const openD = new Set();
 async function renderTab() {
-  for (const k of ["deliv", "events", "usage", "voice"]) { $(`[data-tab=${k}]`).setAttribute("aria-selected", String(k === S.tab)); $("#pane-" + k).hidden = k !== S.tab; }
+  for (const k of ["deliv", "events", "usage", "voice", "talk"]) { $(`[data-tab=${k}]`).setAttribute("aria-selected", String(k === S.tab)); $("#pane-" + k).hidden = k !== S.tab; }
   if (S.tab === "deliv") {
     $("#pane-deliv").innerHTML = S.delivs.length ? S.delivs.map(d => `<details class="deliv" data-d="${d.id}" ${openD.has(d.id) ? "open" : ""}>
       <summary><strong>${esc(d.title)}</strong><span class="muted" style="font-size:12px">${esc(d.kind)} · ${t(d.createdAt)}</span></summary>
@@ -490,6 +514,136 @@ $("#speak-form").addEventListener("submit", async e => {
   } catch (err) { if (err.message !== "unauthorized") $("#sp-status").textContent = err.message; }
   finally { btn.disabled = false; }
 });
+
+// ───── Talk to Vaani (browser voice, same engine as phone calls) ─────
+const Talk = { ws: null, ctx: null, stream: null, node: null, src: null, sink: null, playCursor: 0, sources: [], markTimers: [], pending: [], pendingLen: 0,
+  flushTimer: null, carry: [], pos: 0, active: false };
+
+function mulawEncode(x) { // x: -1..1
+  let s = Math.max(-32768, Math.min(32767, Math.round(x * 32767)));
+  const sign = s < 0 ? 0x80 : 0; if (s < 0) s = -s; if (s > 32635) s = 32635; s += 0x84;
+  let exp = 7; for (let mask = 0x4000; (s & mask) === 0 && exp > 0; exp--, mask >>= 1) {}
+  const mant = (s >> (exp + 3)) & 0x0F;
+  return (~(sign | (exp << 4) | mant)) & 0xFF;
+}
+function mulawDecode(u) {
+  u = (~u) & 0xFF; const sign = u & 0x80, exp = (u >> 4) & 7, mant = u & 0x0F;
+  const s = (((mant << 3) + 0x84) << exp) - 0x84; return (sign ? -s : s) / 32768;
+}
+function b64(bytes) { let s = ""; for (let i = 0; i < bytes.length; i++) s += String.fromCharCode(bytes[i]); return btoa(s); }
+function unb64(str) { const s = atob(str); const out = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) out[i] = s.charCodeAt(i); return out; }
+
+// Mic: downsample to 8 kHz by averaging, μ-law encode, send 20 ms (160-sample) frames.
+function onMic(samples) {
+  if (!Talk.ws || Talk.ws.readyState !== 1) return;
+  const ratio = Talk.ctx.sampleRate / 8000;
+  for (let i = 0; i < samples.length; i++) {
+    Talk.acc = (Talk.acc || 0) + samples[i]; Talk.accN = (Talk.accN || 0) + 1; Talk.pos += 1;
+    if (Talk.pos >= ratio) {
+      Talk.carry.push(mulawEncode(Talk.acc / Talk.accN)); Talk.acc = 0; Talk.accN = 0; Talk.pos -= ratio;
+      if (Talk.carry.length === 160) {
+        Talk.ws.send(JSON.stringify({ event: "media", streamSid: Talk.id, media: { track: "inbound", payload: b64(Talk.carry) } }));
+        Talk.carry = [];
+      }
+    }
+  }
+}
+
+// Playback: collect Vaani's 20 ms frames into ~120 ms buffers and schedule them back to back.
+function queueAudio(mulaw) {
+  const f = new Float32Array(mulaw.length); for (let i = 0; i < mulaw.length; i++) f[i] = mulawDecode(mulaw[i]);
+  Talk.pending.push(f); Talk.pendingLen += f.length;
+  if (Talk.pendingLen >= 960) flushAudio(); else { clearTimeout(Talk.flushTimer); Talk.flushTimer = setTimeout(flushAudio, 40); }
+}
+function flushAudio() {
+  clearTimeout(Talk.flushTimer);
+  if (!Talk.pendingLen || !Talk.ctx) return;
+  const buf = Talk.ctx.createBuffer(1, Talk.pendingLen, 8000), ch = buf.getChannelData(0);
+  let o = 0; for (const p of Talk.pending) { ch.set(p, o); o += p.length; }
+  Talk.pending = []; Talk.pendingLen = 0;
+  const node = Talk.ctx.createBufferSource(); node.buffer = buf; node.connect(Talk.ctx.destination);
+  const at = Math.max(Talk.ctx.currentTime + 0.03, Talk.playCursor);
+  node.start(at); Talk.playCursor = at + buf.duration; Talk.sources.push(node);
+  node.onended = () => { Talk.sources = Talk.sources.filter(x => x !== node); updateTalkState(); };
+  updateTalkState();
+}
+function clearPlayback() {
+  for (const n of Talk.sources) { try { n.stop(); } catch {} }
+  Talk.sources = []; Talk.pending = []; Talk.pendingLen = 0; Talk.playCursor = Talk.ctx ? Talk.ctx.currentTime : 0;
+  for (const t of Talk.markTimers) clearTimeout(t); Talk.markTimers = [];
+  updateTalkState();
+}
+function updateTalkState() {
+  const speaking = Talk.active && (Talk.sources.length > 0 || Talk.pendingLen > 0);
+  $("#talk-btn").classList.toggle("speaking", speaking);
+  $("#talk-btn").classList.toggle("listening", Talk.active && !speaking);
+  $("#talk-state").textContent = !Talk.active ? "Vaani is ready" : speaking ? "Vaani is speaking…" : "Listening…";
+}
+function addBubble(role, text, lang, emotion, interrupted) {
+  const el = document.createElement("div"); el.className = "bubble " + role;
+  const meta = role === "user" ? `You · ${lang}${emotion && emotion !== "calm" ? " · " + emotion : ""}` : `Vaani · ${lang}${interrupted ? " · interrupted" : ""}`;
+  el.innerHTML = `<span class="meta">${esc(meta)}</span>${esc(text || "…")}`;
+  $("#transcript").append(el); $("#transcript").scrollTop = $("#transcript").scrollHeight;
+}
+
+async function startTalk() {
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC || !navigator.mediaDevices?.getUserMedia) { toast("This browser can't use the microphone here."); return; }
+  Talk.ctx = new AC(); Talk.ctx.resume();           // created inside the tap, so iPhone allows sound
+  $("#talk-state").textContent = "Starting…";
+  try {
+    Talk.stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } });
+  } catch { toast("Microphone permission is needed to talk to Vaani."); stopTalk(); return; }
+  let ticket;
+  try { ticket = await api("/v1/voice/web/ticket", { method: "POST" }); }
+  catch (err) { toast(err.message); stopTalk(); return; }
+  Talk.id = ticket.id; Talk.carry = []; Talk.pos = 0; Talk.acc = 0; Talk.accN = 0; Talk.playCursor = Talk.ctx.currentTime;
+  Talk.src = Talk.ctx.createMediaStreamSource(Talk.stream);
+  Talk.sink = Talk.ctx.createGain(); Talk.sink.gain.value = 0; Talk.sink.connect(Talk.ctx.destination);
+  if (Talk.ctx.audioWorklet) {
+    const code = "class C extends AudioWorkletProcessor{process(i){const c=i[0]&&i[0][0];if(c)this.port.postMessage(c.slice(0));return true}}registerProcessor('cap',C);";
+    await Talk.ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([code], { type: "application/javascript" })));
+    Talk.node = new AudioWorkletNode(Talk.ctx, "cap"); Talk.node.port.onmessage = e => onMic(e.data);
+  } else {
+    Talk.node = Talk.ctx.createScriptProcessor(2048, 1, 1); Talk.node.onaudioprocess = e => onMic(e.inputBuffer.getChannelData(0));
+  }
+  Talk.src.connect(Talk.node); Talk.node.connect(Talk.sink);
+
+  Talk.ws = new WebSocket((location.protocol === "https:" ? "wss://" : "ws://") + location.host + "/voice/web/stream");
+  Talk.ws.onopen = () => {
+    Talk.ws.send(JSON.stringify({ event: "start", streamSid: Talk.id, start: { streamSid: Talk.id, callSid: Talk.id, customParameters: { token: ticket.token } } }));
+    Talk.active = true; $("#talk-btn").setAttribute("aria-pressed", "true"); $("#talk-label").textContent = "End"; updateTalkState();
+  };
+  Talk.ws.onmessage = e => {
+    const m = JSON.parse(e.data);
+    if (m.event === "media") queueAudio(unb64(m.media.payload));
+    else if (m.event === "clear") {      // you talked over her: stop playback and mark her last line
+      clearPlayback();
+      const last = [...document.querySelectorAll("#transcript .bubble.assistant")].pop();
+      const meta = last?.querySelector(".meta");
+      if (meta && !meta.textContent.includes("interrupted")) meta.textContent += " · interrupted";
+    }
+    else if (m.event === "mark") {      // tell the engine when this point has actually been heard
+      flushAudio();
+      const wait = Math.max(0, (Talk.playCursor - Talk.ctx.currentTime) * 1000);
+      Talk.markTimers.push(setTimeout(() => { if (Talk.ws?.readyState === 1) Talk.ws.send(JSON.stringify({ event: "mark", streamSid: Talk.id, mark: { name: m.mark.name } })); }, wait));
+    }
+    else if (m.event === "transcript") addBubble(m.role, m.text, m.language, m.emotion, m.interrupted);
+  };
+  Talk.ws.onclose = () => { if (Talk.active) { toast("The conversation ended."); stopTalk(); } };
+}
+function stopTalk() {
+  const wasActive = Talk.active; Talk.active = false;
+  try { if (Talk.ws?.readyState === 1) Talk.ws.send(JSON.stringify({ event: "stop", streamSid: Talk.id })); Talk.ws?.close(); } catch {}
+  Talk.ws = null;
+  clearPlayback();
+  try { Talk.node?.disconnect(); Talk.src?.disconnect(); } catch {}
+  Talk.stream?.getTracks().forEach(t => t.stop()); Talk.stream = null;
+  try { Talk.ctx?.close(); } catch {} Talk.ctx = null;
+  $("#talk-btn").setAttribute("aria-pressed", "false"); $("#talk-label").textContent = "Start talking"; updateTalkState();
+  if (wasActive) { setTimeout(() => { if (S.tab === "events") renderTab(); }, 1500); }
+}
+$("#talk-btn").addEventListener("click", () => { if (Talk.active || Talk.ws) stopTalk(); else startTalk(); });
 
 // ───── Live refresh (pauses when hidden or rate-limited) ─────
 let tick = 0;

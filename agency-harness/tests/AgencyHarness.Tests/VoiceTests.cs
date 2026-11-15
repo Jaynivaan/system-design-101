@@ -514,3 +514,99 @@ public class GeminiAdapterTests
         Assert.Equal("Say warmly: നമസ്കാരം", sent);
     }
 }
+
+public class WebVoiceTests
+{
+    private static HarnessFactory App(FakeTts tts, FakeModel model)
+    {
+        var app = new HarnessFactory();   // note: phone voice NOT enabled; browser talk works without Twilio
+        app.ConfigureServices = s =>
+        {
+            s.RemoveAll<VoiceProviders>();
+            s.AddSingleton(new VoiceProviders(new FakeStt(() => "എനിക്ക് ഒരു വെബ്സൈറ്റ് വേണം"), tts, model, new HeuristicEmotionDetector(), null, null));
+        };
+        return app;
+    }
+
+    private static Task Send(WebSocket ws, object o) =>
+        ws.SendAsync(JsonSerializer.SerializeToUtf8Bytes(o), WebSocketMessageType.Text, true, CancellationToken.None);
+
+    private static Task Reader(WebSocket ws, ConcurrentQueue<JsonElement> into) => Task.Run(async () =>
+    {
+        var buf = new byte[1 << 16];
+        try
+        {
+            while (ws.State == WebSocketState.Open)
+            {
+                var r = await ws.ReceiveAsync(buf, CancellationToken.None);
+                if (r.MessageType == WebSocketMessageType.Close) break;
+                into.Enqueue(JsonDocument.Parse(Encoding.UTF8.GetString(buf, 0, r.Count)).RootElement.Clone());
+            }
+        }
+        catch (WebSocketException) { }
+    });
+
+    [Fact]
+    public async Task Browser_talk_streams_audio_both_ways_with_a_live_transcript_and_records_the_conversation()
+    {
+        var tts = new FakeTts(0.1);
+        using var app = App(tts, new FakeModel("ശരി! ", "എന്ത് തരം വെബ്സൈറ്റ്?"));
+        var (c, tenantId) = await app.NewTenantAsync();
+        var ticket = JsonDocument.Parse(await (await c.PostAsync("/v1/voice/web/ticket", null)).Content.ReadAsStringAsync()).RootElement;
+        var id = ticket.GetProperty("id").GetString()!;
+        var token = ticket.GetProperty("token").GetString()!;
+        Assert.StartsWith($"web-{tenantId:N}-", id);
+
+        var ws = await app.Server.CreateWebSocketClient().ConnectAsync(new Uri("ws://localhost/voice/web/stream"), CancellationToken.None);
+        var got = new ConcurrentQueue<JsonElement>();
+        var reader = Reader(ws, got);
+        await Send(ws, new { @event = "start", streamSid = id, start = new { streamSid = id, callSid = id, customParameters = new { token } } });
+
+        string Ev(JsonElement m) => m.GetProperty("event").GetString()!;
+        await Wait.Until(() => got.Any(m => Ev(m) == "mark"));
+        Assert.Contains(got, m => Ev(m) == "transcript" && m.GetProperty("role").GetString() == "assistant" && m.GetProperty("text").GetString()!.Contains("വാണി"));
+        foreach (var m in got.Where(m => Ev(m) == "mark").ToList())
+            await Send(ws, new { @event = "mark", streamSid = id, mark = new { name = m.GetProperty("mark").GetProperty("name").GetString() } });
+
+        foreach (var f in Tone.Frames(500, true).Concat(Tone.Frames(800, false)))
+            await Send(ws, new { @event = "media", streamSid = id, media = new { track = "inbound", payload = Convert.ToBase64String(f) } });
+
+        await Wait.Until(() => got.Count(m => Ev(m) == "transcript") >= 3);
+        var transcript = got.Where(m => Ev(m) == "transcript").ToList();
+        Assert.Equal("user", transcript[1].GetProperty("role").GetString());
+        Assert.Equal("എനിക്ക് ഒരു വെബ്സൈറ്റ് വേണം", transcript[1].GetProperty("text").GetString());
+        Assert.Equal("ml", transcript[1].GetProperty("language").GetString());
+        Assert.Equal("ശരി! എന്ത് തരം വെബ്സൈറ്റ്?", transcript[2].GetProperty("text").GetString());
+
+        await Send(ws, new { @event = "stop", streamSid = id });
+        await Wait.Until(() =>
+        {
+            using var scope = app.Services.CreateScope();
+            return scope.ServiceProvider.GetRequiredService<HarnessDbContext>().Outbox.Any(o => o.EventType == "call.completed" && o.TenantId == tenantId);
+        });
+    }
+
+    [Fact]
+    public async Task A_talk_pass_works_once_and_never_on_the_phone_endpoint()
+    {
+        using var app = App(new FakeTts(), new FakeModel("Hi."));
+        var (c, _) = await app.NewTenantAsync();
+        Assert.Equal(HttpStatusCode.Unauthorized, (await app.CreateClient().PostAsync("/v1/voice/web/ticket", null)).StatusCode);
+        var t = JsonDocument.Parse(await (await c.PostAsync("/v1/voice/web/ticket", null)).Content.ReadAsStringAsync()).RootElement;
+        var (id, token) = (t.GetProperty("id").GetString()!, t.GetProperty("token").GetString()!);
+
+        async Task<WebSocketCloseStatus?> TryStart(string path)
+        {
+            var ws = await app.Server.CreateWebSocketClient().ConnectAsync(new Uri("ws://localhost" + path), CancellationToken.None);
+            await Send(ws, new { @event = "start", streamSid = id, start = new { streamSid = id, callSid = id, customParameters = new { token } } });
+            var buf = new byte[1 << 16];
+            var r = await ws.ReceiveAsync(buf, CancellationToken.None);
+            return r.MessageType == WebSocketMessageType.Close ? ws.CloseStatus : null;
+        }
+
+        // The phone endpoint is off here (voice not enabled) and refuses the upgrade outright.
+        var phone = await Assert.ThrowsAnyAsync<Exception>(() => TryStart("/voice/twilio/stream"));
+        Assert.Null(await TryStart("/voice/web/stream"));                                     // first use: accepted (greeting arrives)
+        Assert.Equal(WebSocketCloseStatus.PolicyViolation, await TryStart("/voice/web/stream")); // replay: refused
+    }
+}

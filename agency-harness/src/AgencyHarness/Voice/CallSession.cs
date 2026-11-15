@@ -15,6 +15,12 @@ public interface IVoiceSink
     Task MarkAsync(string name, CancellationToken ct);
 }
 
+/// <summary>Optional: sinks that can show a live transcript (the browser does; Twilio doesn't).</summary>
+public interface ITranscriptSink
+{
+    Task TranscriptAsync(string role, string text, string language, string? emotion, bool interrupted, CancellationToken ct);
+}
+
 public interface ICallControl
 {
     Task TransferAsync(string callId, string toNumber, CancellationToken ct);
@@ -174,6 +180,7 @@ public sealed class CallSession : IAsyncDisposable
             _history.Add(new ChatTurn("assistant", text));
             _turns.Add(new VoiceTurn(turn, _lang.Current, null, null, text, false, null, "scripted"));
         }
+        await ShowAsync("assistant", text, null, false);
     }
 
     private async Task RespondAsync(PcmAudio utterance, CancellationToken ct)
@@ -213,6 +220,8 @@ public sealed class CallSession : IAsyncDisposable
             _history.Add(new ChatTurn("user", stt.Text));
             history = _history.ToList();
         }
+
+        await ShowAsync("user", stt.Text, emotion.Label, false);
 
         // 4. Rules before the model: distress, or anger that keeps rising, goes to a human.
         if (ShouldEscalate() && _p.CallControl is not null && !string.IsNullOrEmpty(_o.TransferNumber))
@@ -265,8 +274,10 @@ public sealed class CallSession : IAsyncDisposable
             lock (_gate)
             {
                 var idx = _turns.FindLastIndex(t => t.Index == turn);
+                if (idx >= 0 && _turns[idx].Interrupted) _ = ShowAsync("assistant", _turns[idx].AssistantText ?? "", null, true);
                 if (idx >= 0 && !_turns[idx].Interrupted)
                 {
+                    _ = ShowAsync("assistant", said.ToString(), null, false);
                     _turns[idx] = _turns[idx] with { AssistantText = said.ToString(), TimeToFirstAudioMs = ttfa, Model = (_p.Model as FallbackResponseModel)?.LastUsed ?? _p.Model.Name };
                     var h = _history.FindLastIndex(x => x.Role == "assistant");
                     if (h >= 0) _history[h] = new ChatTurn("assistant", said.ToString());
@@ -299,6 +310,11 @@ public sealed class CallSession : IAsyncDisposable
         await _sink.MarkAsync(mark, ct);
         return ttfa;
     }
+
+    private Task ShowAsync(string role, string text, string? emotion, bool interrupted) =>
+        _sink is ITranscriptSink t && text.Length > 0
+            ? t.TranscriptAsync(role, text, _lang.Current, emotion, interrupted, CancellationToken.None)
+            : Task.CompletedTask;
 
     private async Task WaitForPlaybackAsync(TimeSpan max, CancellationToken ct)
     {
