@@ -51,7 +51,9 @@ public class ScriptedAgentRunner : IAgentRunner
         Func<CancellationToken, Task> heartbeat, CancellationToken ct)
     {
         IAgentTool Tool(string n) => tools.First(t => t.Name == n);
-        var brief = await Tool("get_client_brief").ExecuteAsync(ctx, default, ct);
+        var briefJson = await Tool("get_client_brief").ExecuteAsync(ctx, default, ct);
+        var b = JsonSerializer.Deserialize<ClientBrief>(briefJson)!;
+        var brief = $"{b.Client}: {b.Brief}\n\n**Project:** {b.Project}. {b.ProjectGoal}";
         await heartbeat(ct);
 
         if (role.Name == "strategist")
@@ -68,9 +70,9 @@ public class ScriptedAgentRunner : IAgentRunner
 
             **Task:** {ctx.Job.Instructions}
 
-            **Client context:** {brief}
+            **Client:** {brief}
 
-            _Set ANTHROPIC_API_KEY to have Claude produce this deliverable._
+            _This is a placeholder from the scripted runner. Connect a model (Harness:Models: a local model, Gemini, or your OpenCode models) to have a real agent write it._
             """;
         await Tool("save_deliverable").ExecuteAsync(ctx,
             JsonSerializer.SerializeToElement(new { title = $"{role.Name}: {Trim(ctx.Job.Instructions, 60)}", content, kind = "other" }), ct);

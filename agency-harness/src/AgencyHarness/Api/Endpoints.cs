@@ -127,15 +127,36 @@ public static class Endpoints
             if (DecodeCursor(cursor) is { } before) q = q.Where(j => j.CreatedAt < before);
             var items = await q.OrderByDescending(j => j.CreatedAt).Take(take + 1).ToListAsync();
             var page = ToPage(items, take, j => j.CreatedAt);
-            return Results.Ok(new Page<object>(page.Items.Select(JobView).ToList(), page.NextCursor));
+            var models = await ModelsForAsync(db, tid, page.Items.Select(j => j.Id).ToList());
+            return Results.Ok(new Page<object>(page.Items.Select(j => JobView(j, models.GetValueOrDefault(j.Id))).ToList(), page.NextCursor));
         });
 
         v1.MapGet("/jobs/{id:guid}", async (Guid id, HttpContext http, HarnessDbContext db) =>
         {
             var tid = http.Tenant().Id;
             var j = await db.Jobs.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id && x.TenantId == tid);
-            return j is null ? Results.NotFound() : Results.Ok(JobView(j));
+            if (j is null) return Results.NotFound();
+            var models = await ModelsForAsync(db, tid, [j.Id]);
+            return Results.Ok(JobView(j, models.GetValueOrDefault(j.Id)));
         });
+
+        // Which models the agents use, in what order per role, and whether each is healthy right now.
+        v1.MapGet("/models", (ModelCatalog catalog, IAgentRunner runner) => Results.Ok(new
+        {
+            runner = runner switch { RoutedAgentRunner => "models", ScriptedAgentRunner => "scripted", _ => "claude" },
+            routing = catalog.Routing,
+            models = catalog.Entries.Select(e => new
+            {
+                e.Name,
+                model = e.Profile?.Model ?? "claude",
+                endpoint = e.Profile is { } p && Uri.TryCreate(p.BaseUrl, UriKind.Absolute, out var u) ? $"{u.Scheme}://{u.Authority}" : "anthropic",
+                local = e.Profile is { } lp && IsLocal(lp.BaseUrl),
+                tools = e.Profile?.Tools ?? true,
+                source = e.Profile?.Source ?? "claude",
+                health = e.Breaker.State.ToString(),
+            }),
+            notes = catalog.Notes,
+        }));
 
         v1.MapPost("/jobs/{id:guid}/cancel", async (Guid id, HttpContext http, HarnessDbContext db, TimeProvider clock) =>
         {
@@ -235,8 +256,25 @@ public static class Endpoints
     private static bool IsAllowedWebhook(string url, bool dev) =>
         Uri.TryCreate(url, UriKind.Absolute, out var u) && (u.Scheme == Uri.UriSchemeHttps || (dev && u.Scheme == Uri.UriSchemeHttp));
 
-    internal static object JobView(AgentJob j) => new
+    private static async Task<Dictionary<Guid, string>> ModelsForAsync(HarnessDbContext db, Guid tenantId, List<Guid> jobIds) =>
+        (await db.Usage.AsNoTracking().Where(u => u.TenantId == tenantId && jobIds.Contains(u.JobId))
+            .Select(u => new { u.JobId, u.Model, u.Id }).ToListAsync())
+        .GroupBy(u => u.JobId).ToDictionary(g => g.Key, g => g.OrderByDescending(x => x.Id).First().Model);
+
+    private static bool IsLocal(string url)
     {
+        if (!Uri.TryCreate(url, UriKind.Absolute, out var u)) return false;
+        if (u.IsLoopback || u.Host.EndsWith(".local") || u.Host is "host.containers.internal" or "host.docker.internal") return true;
+        if (!System.Net.IPAddress.TryParse(u.Host, out var ip) || ip.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork) return false;
+        var b = ip.GetAddressBytes();   // private ranges: 10/8, 172.16/12, 192.168/16
+        return b[0] == 10 || (b[0] == 172 && b[1] >= 16 && b[1] <= 31) || (b[0] == 192 && b[1] == 168);
+    }
+
+    internal static object JobView(AgentJob j) => JobView(j, null);
+
+    internal static object JobView(AgentJob j, string? model) => new
+    {
+        model,
         j.Id, j.ProjectId, j.ParentJobId, role = j.AgentRole, j.Instructions, j.Priority,
         status = j.Status.ToString(), j.Attempts, j.MaxAttempts, j.NextAttemptAt,
         j.Output, j.LastError, j.InputTokens, j.OutputTokens, j.CostUsd, j.CreatedAt, j.CompletedAt,

@@ -300,9 +300,18 @@ async function loadMe() {
   c.lastElementChild.textContent = `${money(S.me.monthSpendUsd)} of ${money(S.me.monthlyBudgetUsd)} this month`;
 }
 async function loadHealth() {
-  try { const h = await (await fetch("/health/ready")).json(); const c = $("#chip-model");
-    c.querySelector(".dot").className = "dot " + (h.modelCircuit === "Closed" ? "ok" : h.modelCircuit === "Open" ? "crit" : "warn");
-    c.lastElementChild.textContent = h.modelCircuit === "Closed" ? "Model OK" : "Model circuit " + h.modelCircuit.toLowerCase(); } catch {}
+  // Which model the agents use first, and whether it's healthy.
+  try {
+    const m = await api("/v1/models"); const c = $("#chip-model");
+    if (m.runner === "scripted") { c.querySelector(".dot").className = "dot warn"; c.lastElementChild.textContent = "Agents: placeholder (no model connected)"; return; }
+    const chain = (m.routing["*"] || []).map(n => m.models.find(x => x.name === n)).filter(Boolean);
+    const first = chain.find(x => x.health === "Closed") || chain[0];
+    if (!first) { c.querySelector(".dot").className = "dot crit"; c.lastElementChild.textContent = "Agents: no model available"; return; }
+    const down = chain.filter(x => x.health !== "Closed").length;
+    c.querySelector(".dot").className = "dot " + (first.health === "Closed" ? (down ? "warn" : "ok") : "crit");
+    c.lastElementChild.textContent = `Agents: ${first.model}${first.local ? " (local)" : ""}${chain.length > 1 ? ` +${chain.length - 1} backup` : ""}`;
+    c.title = chain.map(x => `${x.name}: ${x.model} — ${x.health === "Closed" ? "healthy" : "paused after errors"}`).join("\n");
+  } catch {}
 }
 async function loadProjects() {
   S.projects = await api("/v1/projects");
@@ -403,6 +412,7 @@ function renderDrawer() {
   root.innerHTML = `<div class="back" data-close></div><aside class="drawer" role="dialog" aria-modal="true" aria-label="Job details">
     <div class="row" style="justify-content:space-between"><h2 style="font-size:18px">${esc(j.role)} job</h2><button class="btn small" type="button" data-close>Close</button></div>
     <dl class="kv"><dt>Status</dt><dd>${esc(j.status === "Failed" ? "Retrying" : j.status)}</dd><dt>Attempts</dt><dd>${j.attempts} of ${j.maxAttempts}</dd>
+      <dt>Model</dt><dd>${esc(j.model || (j.status === "Succeeded" ? "placeholder" : "not run yet"))}</dd>
       <dt>Cost</dt><dd>${money(j.costUsd)} · ${(j.inputTokens + j.outputTokens).toLocaleString()} tokens</dd><dt>Job id</dt><dd class="mono">${esc(j.id)}</dd>
       <dt>Instructions</dt><dd>${esc(j.instructions)}</dd>${j.lastError ? `<dt>Last error</dt><dd style="color:var(--crit)">${esc(j.lastError)}</dd>` : ""}${j.output ? `<dt>Summary</dt><dd>${esc(j.output)}</dd>` : ""}</dl>
     <div class="row">${j.status === "DeadLettered" ? `<button class="btn primary" type="button" data-retry="${j.id}">Retry</button>` : ""}${j.status === "Queued" || j.status === "Failed" ? `<button class="btn" type="button" data-cancel="${j.id}">Cancel job</button>` : ""}</div>

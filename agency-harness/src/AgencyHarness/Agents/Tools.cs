@@ -58,7 +58,7 @@ public class GetClientBriefTool : IAgentTool
     {
         var brief = await ctx.BriefCache.GetAsync(ctx.Job.TenantId, ctx.Job.ProjectId, ct)
                     ?? throw new ToolException("Project not found.");
-        return JsonSerializer.Serialize(brief);
+        return JsonSerializer.Serialize(brief, OpenAiChatAgentRunner.Json);
     }
 }
 
@@ -80,7 +80,7 @@ public class ListDeliverablesTool : IAgentTool
         {
             d.Title, d.Kind,
             preview = d.Content.Length > 2000 ? d.Content[..2000] + "…" : d.Content,
-        }));
+        }), OpenAiChatAgentRunner.Json);
     }
 }
 

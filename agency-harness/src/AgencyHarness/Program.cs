@@ -49,17 +49,24 @@ builder.Services.AddSingleton<ToolRegistry>();
 
 var claudeOptions = cfg.GetSection("Harness:Claude").Get<ClaudeOptions>() ?? new ClaudeOptions();
 builder.Services.AddSingleton(claudeOptions);
-var useClaude = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY"))
-                && !cfg.GetValue("Harness:ForceScriptedRunner", false);
+var forceScripted = cfg.GetValue("Harness:ForceScriptedRunner", false);
+var useClaude = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("ANTHROPIC_API_KEY")) && !forceScripted;
 if (useClaude)
 {
     builder.Services.AddSingleton(_ => new AnthropicClient());   // reads ANTHROPIC_API_KEY
-    builder.Services.AddSingleton<IAgentRunner, ClaudeAgentRunner>();
+    builder.Services.AddSingleton<ClaudeAgentRunner>();
 }
-else
-{
-    builder.Services.AddSingleton<IAgentRunner, ScriptedAgentRunner>();
-}
+
+// Models the agents run on: local (Ollama, llama.cpp, LM Studio, vLLM), cloud (Gemini, OpenAI, OpenRouter…),
+// models imported from your OpenCode config, and Claude, chained per role with fallbacks.
+var modelOptions = cfg.GetSection("Harness:Models").Get<ModelOptions>() ?? new ModelOptions();
+builder.Services.AddSingleton(modelOptions);
+builder.Services.AddHttpClient("models", c => c.Timeout = Timeout.InfiniteTimeSpan);   // each profile sets its own timeout
+builder.Services.AddSingleton<ModelCatalog>();
+var useRouter = !forceScripted && (modelOptions.Profiles.Count > 0 || !string.IsNullOrEmpty(modelOptions.OpenCodeConfig));
+if (useRouter) builder.Services.AddSingleton<IAgentRunner, RoutedAgentRunner>();
+else if (useClaude) builder.Services.AddSingleton<IAgentRunner>(sp => sp.GetRequiredService<ClaudeAgentRunner>());
+else builder.Services.AddSingleton<IAgentRunner, ScriptedAgentRunner>();
 
 // ---------- Workers ----------
 builder.Services.AddSingleton(cfg.GetSection("Harness:Worker").Get<WorkerOptions>() ?? new WorkerOptions());
@@ -119,7 +126,15 @@ using (var scope = app.Services.CreateScope())
         db.Database.ExecuteSqlRaw("PRAGMA journal_mode=WAL;");   // readers don't block the writer
 }
 
-app.Logger.LogInformation("Agent runner: {Runner}", useClaude ? $"Claude ({claudeOptions.Model})" : "scripted (set ANTHROPIC_API_KEY for Claude)");
+{
+    var catalog = app.Services.GetRequiredService<ModelCatalog>();
+    if (useRouter)
+    {
+        app.Logger.LogInformation("Agent models: {Routing}", string.Join("; ", catalog.Routing.Select(r => $"{r.Key} → {string.Join(" > ", r.Value)}")));
+        foreach (var note in catalog.Notes) app.Logger.LogWarning("Models: {Note}", note);
+    }
+    else app.Logger.LogInformation("Agent runner: {Runner}", useClaude ? $"Claude ({claudeOptions.Model})" : "scripted (configure Harness:Models or set ANTHROPIC_API_KEY for real agents)");
+}
 
 app.UseForwardedHeaders();
 // The dashboard (wwwroot/index.html) is served at "/". It only talks to the /v1 API with the
