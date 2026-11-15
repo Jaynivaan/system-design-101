@@ -147,3 +147,65 @@ public class LanguageTracker(string initial, double switchThreshold)
 
     public void Force(string language) { Current = language; _candidate = null; }
 }
+
+public class GeminiSttOptions
+{
+    public string BaseUrl { get; set; } = "https://generativelanguage.googleapis.com";
+    /// <summary>A fast multimodal Gemini model that accepts audio.</summary>
+    public string Model { get; set; } = "gemini-3.8-flash";
+    /// <summary>Languages the caller may speak; Gemini picks one and transcribes in its script.</summary>
+    public string[] Languages { get; set; } = ["ml", "en", "fr", "hi", "ta"];
+    public string? ApiKey { get; set; }
+}
+
+/// <summary>
+/// Speech-to-text and language ID in one call, using Gemini's audio understanding. A cloud stand-in
+/// for your local IndicConformer while the harness can't reach your PC's models; it also detects
+/// English, which IndicConformer can't.
+/// </summary>
+public class GeminiSpeechToText(HttpClient http, GeminiSttOptions o) : ISpeechToText
+{
+    public async Task<SttResult> TranscribeAsync(PcmAudio utterance, string? languageHint, CancellationToken ct)
+    {
+        var key = string.IsNullOrEmpty(o.ApiKey) ? Environment.GetEnvironmentVariable("GEMINI_API_KEY") : o.ApiKey;
+        if (string.IsNullOrEmpty(key)) throw new ProviderUnavailableException("Gemini speech-to-text has no API key (set GEMINI_API_KEY).");
+        var wav = Wav.Write(new PcmAudio(Pcm.Resample(utterance.Samples, utterance.SampleRate, 16000), 16000));
+        var langs = string.Join(", ", o.Languages.Select(l => $"{l} ({LanguageNames.Get(l)})"));
+        var instruction =
+            $"This is one caller utterance from a phone call. The caller most likely speaks {LanguageNames.Get(languageHint ?? o.Languages[0])}, " +
+            $"but may speak any of: {langs}, or mix Malayalam with English. Transcribe exactly what was said, in the language's own script " +
+            "(Malayalam in Malayalam script; keep English words that were spoken in English). Reply with only JSON: " +
+            "{\"lang\": \"<code of the main language spoken>\", \"text\": \"<transcript>\"}. If there is no speech, use an empty text.";
+        var body = JsonSerializer.Serialize(new
+        {
+            contents = new[] { new { parts = new object[] { new { text = instruction }, new { inline_data = new { mime_type = "audio/wav", data = Convert.ToBase64String(wav) } } } } },
+            generationConfig = new { responseMimeType = "application/json", temperature = 0 },
+        });
+        using var req = new HttpRequestMessage(HttpMethod.Post, $"{o.BaseUrl.TrimEnd('/')}/v1beta/models/{o.Model}:generateContent")
+        {
+            Content = new StringContent(body, Encoding.UTF8, "application/json"),
+        };
+        req.Headers.Add("x-goog-api-key", key);
+        HttpResponseMessage resp;
+        try { resp = await http.SendAsync(req, ct); }
+        catch (HttpRequestException e) { throw new ProviderUnavailableException("Gemini speech-to-text unreachable: " + e.Message, e); }
+        using var _ = resp;
+        if (!resp.IsSuccessStatusCode) throw new ProviderUnavailableException($"Gemini speech-to-text returned {(int)resp.StatusCode}.");
+        try
+        {
+            using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+            var text = doc.RootElement.GetProperty("candidates")[0].GetProperty("content").GetProperty("parts")[0].GetProperty("text").GetString() ?? "";
+            text = text.Trim().Trim('`');
+            if (text.StartsWith("json", StringComparison.OrdinalIgnoreCase)) text = text[4..];
+            using var result = JsonDocument.Parse(text);
+            var lang = result.RootElement.TryGetProperty("lang", out var l) ? l.GetString() : null;
+            var transcript = result.RootElement.TryGetProperty("text", out var t) ? t.GetString() ?? "" : "";
+            if (lang is not null && !o.Languages.Contains(lang)) lang = null;
+            return new SttResult(transcript.Trim(), lang, lang is null ? null : 0.9);
+        }
+        catch (Exception e) when (e is JsonException or KeyNotFoundException or InvalidOperationException or IndexOutOfRangeException)
+        {
+            throw new ProviderUnavailableException("Gemini speech-to-text returned an unexpected answer.", e);
+        }
+    }
+}

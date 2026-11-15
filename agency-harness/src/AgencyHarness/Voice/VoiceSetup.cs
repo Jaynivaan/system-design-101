@@ -28,9 +28,10 @@ public static class VoiceSetup
             models.Add((new ClaudeResponseModel(new Anthropic.AnthropicClient(), o.ClaudeModel), Breaker()));
         IResponseModel model = new FallbackResponseModel(models, TimeSpan.FromMilliseconds(o.FirstTokenTimeoutMs), log);
 
-        ISpeechToText stt = o.Stt is { BaseUrl.Length: > 0 }
-            ? new FallbackSpeechToText([(new HttpSpeechToText(http, o.Stt), Breaker())])
-            : new UnconfiguredStt();
+        var sttChain = new List<(ISpeechToText, CircuitBreaker)>();
+        if (o.GeminiStt is not null) sttChain.Add((new GeminiSpeechToText(http, o.GeminiStt), Breaker()));
+        if (o.Stt is { BaseUrl.Length: > 0 }) sttChain.Add((new HttpSpeechToText(http, o.Stt), Breaker()));
+        ISpeechToText stt = sttChain.Count > 0 ? new FallbackSpeechToText(sttChain) : new UnconfiguredStt();
 
         var engines = new Dictionary<string, ITextToSpeech>();
         if (o.LocalTts is { BaseUrl.Length: > 0 }) engines["local"] = new OpenAiSpeechTextToSpeech(http, o.LocalTts);

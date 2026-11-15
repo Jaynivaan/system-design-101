@@ -61,6 +61,8 @@ public class VoiceOptions
     public string ClaudeModel { get; set; } = "claude-opus-5-5";
     public int FirstTokenTimeoutMs { get; set; } = 2500;
     public HttpSttOptions? Stt { get; set; }
+    /// <summary>Gemini speech-to-text (with language detection). Used first when set; your local STT becomes the fallback.</summary>
+    public GeminiSttOptions? GeminiStt { get; set; }
     public IndicLidOptions? LanguageId { get; set; }
     public OpenAiSpeechOptions? LocalTts { get; set; }
     public GeminiTtsOptions? GeminiTts { get; set; }

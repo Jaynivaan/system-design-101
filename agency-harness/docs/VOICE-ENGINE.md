@@ -214,3 +214,36 @@ Built and tested (36 automated tests, using fake models; no real call has gone t
    `gemma4:e4b` (6.6 GB) can't share your 8 GB GPU with the speech models during a call. See
    [MODEL-OPTIONS.md](MODEL-OPTIONS.md) for options, and the training loop above for building the
    real one from consented calls.
+
+## Quick start: Vaani on Gemini only
+
+This works today even though the harness container can't reach your PC's local models. Gemini does
+the listening (speech-to-text and language detection, English included), the thinking (through its
+OpenAI-compatible endpoint) and the speaking. Your local models can replace each piece later, one
+setting at a time.
+
+Add these lines to `harness.env`. Fill in your own values, and never commit or share this file.
+```
+Harness__Voice__Enabled=true
+Harness__Voice__TenantId=<your agency id (GET /v1/me)>
+Harness__Voice__PublicBaseUrl=https://<your-tunnel>.trycloudflare.com
+Harness__Voice__TransferNumber=+1902...
+Harness__Voice__Twilio__AccountSid=AC...
+Harness__Voice__Twilio__AuthToken=...
+GEMINI_API_KEY=...
+Harness__Voice__GeminiStt__Model=gemini-3.8-flash
+Harness__Voice__CustomLlm__BaseUrl=https://generativelanguage.googleapis.com
+Harness__Voice__CustomLlm__ChatPath=/v1beta/openai/chat/completions
+Harness__Voice__CustomLlm__Model=gemini-3.8-flash
+Harness__Voice__CustomLlm__ApiKeyEnv=GEMINI_API_KEY
+Harness__Voice__GeminiTts__Model=gemini-3.8-flash-tts
+```
+Check the Gemini model names against the models your key can use. If `ANTHROPIC_API_KEY` is also
+set, Claude is the backup response model.
+
+In the Twilio console, open your number. Under **Voice → A call comes in**, choose **Webhook**,
+enter `https://<your-tunnel>.trycloudflare.com/voice/twilio/incoming`, and select **HTTP POST**.
+If the tunnel address changes, update both this webhook and `PublicBaseUrl`.
+
+On a Twilio **trial** account, callers first hear a short trial notice and must press a key, and
+outgoing calls can only go to numbers you've verified. Upgrading the account removes both limits.

@@ -47,6 +47,10 @@ public class OpenAiCompatibleOptions
     public string BaseUrl { get; set; } = "";
     public string Model { get; set; } = "";
     public string? ApiKey { get; set; }
+    /// <summary>Read the key from this environment variable when ApiKey is empty (e.g. GEMINI_API_KEY).</summary>
+    public string? ApiKeyEnv { get; set; }
+    /// <summary>Path of the chat endpoint. Gemini's OpenAI-compatible one is /v1beta/openai/chat/completions.</summary>
+    public string ChatPath { get; set; } = "/v1/chat/completions";
     public int MaxTokens { get; set; } = 300;
     public double Temperature { get; set; } = 0.6;
 }
@@ -67,11 +71,12 @@ public class OpenAiCompatibleResponseModel(HttpClient http, OpenAiCompatibleOpti
         messages.AddRange(history.Select(h => new { role = h.Role, content = h.Text }));
         var body = JsonSerializer.Serialize(new { model = o.Model, messages, stream = true, max_tokens = o.MaxTokens, temperature = o.Temperature });
 
-        using var req = new HttpRequestMessage(HttpMethod.Post, o.BaseUrl.TrimEnd('/') + "/v1/chat/completions")
+        using var req = new HttpRequestMessage(HttpMethod.Post, o.BaseUrl.TrimEnd('/') + o.ChatPath)
         {
             Content = new StringContent(body, Encoding.UTF8, "application/json"),
         };
-        if (!string.IsNullOrEmpty(o.ApiKey)) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", o.ApiKey);
+        var key = !string.IsNullOrEmpty(o.ApiKey) ? o.ApiKey : string.IsNullOrEmpty(o.ApiKeyEnv) ? null : Environment.GetEnvironmentVariable(o.ApiKeyEnv);
+        if (!string.IsNullOrEmpty(key)) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", key);
 
         HttpResponseMessage resp;
         try { resp = await http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, ct); }

@@ -463,3 +463,54 @@ public class VoiceLabTests
         Assert.Equal(HttpStatusCode.BadRequest, tooLong.StatusCode);
     }
 }
+
+public class GeminiAdapterTests
+{
+    private class Stub(Func<HttpRequestMessage, string> respond) : HttpMessageHandler
+    {
+        public HttpRequestMessage? Last;
+        public string? LastBody;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage r, CancellationToken ct)
+        {
+            Last = r; LastBody = r.Content is null ? null : await r.Content.ReadAsStringAsync(ct);
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(respond(r), Encoding.UTF8, "application/json") };
+        }
+    }
+
+    [Fact]
+    public async Task Gemini_stt_returns_transcript_and_detected_language()
+    {
+        var inner = JsonSerializer.Serialize(new { lang = "ml", text = "എനിക്ക് ഒരു website വേണം" });
+        var stub = new Stub(_ => JsonSerializer.Serialize(new { candidates = new[] { new { content = new { parts = new[] { new { text = inner } } } } } }));
+        var stt = new GeminiSpeechToText(new HttpClient(stub), new GeminiSttOptions { ApiKey = "k", Model = "m" });
+        var r = await stt.TranscribeAsync(Tone.Audio(0.5, 8000), "ml", default);
+        Assert.Equal("എനിക്ക് ഒരു website വേണം", r.Text);
+        Assert.Equal("ml", r.Language);
+        Assert.EndsWith("/v1beta/models/m:generateContent", stub.Last!.RequestUri!.AbsolutePath);
+        Assert.Equal("k", stub.Last.Headers.GetValues("x-goog-api-key").Single());
+        Assert.Contains("audio/wav", stub.LastBody);
+    }
+
+    [Fact]
+    public async Task Gemini_stt_ignores_languages_outside_the_allowed_list()
+    {
+        var inner = JsonSerializer.Serialize(new { lang = "xx", text = "hello" });
+        var stub = new Stub(_ => JsonSerializer.Serialize(new { candidates = new[] { new { content = new { parts = new[] { new { text = "```json\n" + inner + "\n```" } } } } } }));
+        var r = await new GeminiSpeechToText(new HttpClient(stub), new GeminiSttOptions { ApiKey = "k" }).TranscribeAsync(Tone.Audio(0.3, 8000), null, default);
+        Assert.Equal("hello", r.Text);
+        Assert.Null(r.Language);
+    }
+
+    [Fact]
+    public async Task Gemini_tts_reads_raw_pcm_with_rate_from_mime_type()
+    {
+        var pcm = new short[2400]; for (int i = 0; i < pcm.Length; i++) pcm[i] = (short)(i % 100);
+        var bytes = new byte[pcm.Length * 2]; Buffer.BlockCopy(pcm, 0, bytes, 0, bytes.Length);
+        var stub = new Stub(_ => JsonSerializer.Serialize(new { candidates = new[] { new { content = new { parts = new[] { new { inlineData = new { mimeType = "audio/L16;codec=pcm;rate=24000", data = Convert.ToBase64String(bytes) } } } } } } }));
+        var audio = await new GeminiTextToSpeech(new HttpClient(stub), new GeminiTtsOptions { ApiKey = "k" }).SpeakAsync("നമസ്കാരം", "ml", "Say warmly", default);
+        Assert.Equal(24000, audio.SampleRate);
+        Assert.Equal(pcm, audio.Samples);
+        var sent = JsonDocument.Parse(stub.LastBody!).RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString();
+        Assert.Equal("Say warmly: നമസ്കാരം", sent);
+    }
+}
