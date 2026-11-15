@@ -161,6 +161,7 @@ table.usage th:first-child, table.usage td:first-child { text-align: left; }
       <span class="chip" id="chip-spend"><span class="dot"></span><span>Spend</span></span>
       <span class="chip" id="chip-model"><span class="dot"></span><span>Model</span></span>
       <span class="chip" id="chip-sync"><span class="dot ok"></span><span>Live</span></span>
+      <button class="btn small primary" id="goto-talk" type="button">🎙 Talk to Vaani</button>
       <button class="btn small" id="signout" type="button">Sign out</button>
     </div>
   </header>
@@ -643,6 +644,10 @@ function stopTalk() {
   $("#talk-btn").setAttribute("aria-pressed", "false"); $("#talk-label").textContent = "Start talking"; updateTalkState();
   if (wasActive) { setTimeout(() => { if (S.tab === "events") renderTab(); }, 1500); }
 }
+$("#goto-talk").addEventListener("click", () => {
+  S.tab = "talk"; renderTab();
+  $("#pane-talk").closest(".panel").scrollIntoView({ behavior: "smooth", block: "start" });
+});
 $("#talk-btn").addEventListener("click", () => { if (Talk.active || Talk.ws) stopTalk(); else startTalk(); });
 
 // ───── Live refresh (pauses when hidden or rate-limited) ─────
