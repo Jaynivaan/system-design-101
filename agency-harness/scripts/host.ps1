@@ -5,7 +5,9 @@
 # If localhost doesn't answer (e.g. WSL with localhostForwarding=false), the script finds the
 # Podman machine's WSL IP address and uses that for the health check and the tunnel.
 param([switch]$Tunnel, [switch]$SkipBuild, [int]$Port = 8080, [string]$Cli = "podman", [string]$Image = "agency-harness:latest",
-      [string]$HostAddress = "localhost", [string]$MachineName = "podman-machine-default")
+      [string]$HostAddress = "localhost", [string]$MachineName = "podman-machine-default",
+      # Path of the Podman API socket inside the Podman machine, to let agents run code in sandboxes (see docs/SANDBOX.md).
+      [string]$SandboxSocket = "")
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $Name = "agency-harness"; $EnvFile = "harness.env"
@@ -75,7 +77,13 @@ if (-not $SkipBuild) { Write-Host "Building $Image..."; & $Cli build -t $Image .
 # 3. (Re)start the container. Data stays in the named volume.
 & $Cli volume inspect agency-harness-data *> $null; if ($LASTEXITCODE) { & $Cli volume create agency-harness-data | Out-Null }
 & $Cli rm -f $Name *> $null
-& $Cli run -d --name $Name --restart=unless-stopped -p "${Port}:8080" -v agency-harness-data:/data --env-file $EnvFile $Image | Out-Null
+$sandboxArgs = @()
+if ($SandboxSocket) {
+  # The harness starts each sandbox through this socket; sandboxes themselves get no network and strict limits.
+  $sandboxArgs = @("-v", "${SandboxSocket}:/run/podman.sock", "--security-opt", "label=disable",
+                   "-e", "Harness__Sandbox__Mode=container", "-e", "Harness__Sandbox__Engine=unix:///run/podman.sock")
+}
+& $Cli run -d --name $Name --restart=unless-stopped -p "${Port}:8080" -v agency-harness-data:/data --env-file $EnvFile @sandboxArgs $Image | Out-Null
 if ($LASTEXITCODE) { throw "Could not start the container." }
 
 Write-Host -NoNewline "Starting"

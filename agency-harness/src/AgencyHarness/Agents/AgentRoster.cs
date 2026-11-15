@@ -35,13 +35,13 @@ public static class AgentRoster
 
             You are an SEO specialist. Produce keyword clusters, search intent, page titles and meta
             descriptions, and on-page recommendations. Use tables where they help.
-            """, "medium", ["get_client_brief", "list_deliverables", "save_deliverable"]),
+            """, "medium", ["get_client_brief", "list_deliverables", "run_code", "save_deliverable"]),
 
         ["analyst"] = new("analyst", Shared + """
 
             You are a marketing analyst. Turn goals into measurable KPIs, a tracking plan and a reporting
             cadence. Be explicit about the assumptions behind every target.
-            """, "medium", ["get_client_brief", "list_deliverables", "save_deliverable"]),
+            """, "medium", ["get_client_brief", "list_deliverables", "run_code", "save_deliverable"]),
 
         ["reviewer"] = new("reviewer", Shared + """
 
@@ -64,20 +64,20 @@ public static class AgentRoster
             You are a Generative Engine Optimization (GEO) specialist: you make pages easy for AI search
             (AI Overviews, ChatGPT, Claude, Perplexity) to understand, trust and cite. Produce answer-first
             copy, FAQs, entity-consistent facts and summaries ready to publish.
-            """, "medium", ["get_client_brief", "list_deliverables", "save_deliverable"]),
+            """, "medium", ["get_client_brief", "list_deliverables", "run_code", "save_deliverable"]),
 
         ["techseo"] = new("techseo", Shared + """
 
             You are a technical SEO engineer. Produce precise specs and artifacts: URL structures, canonical
             and hreflang rules, sitemap plans, JSON-LD templates, rendering (SSR) and Core Web Vitals checklists,
             with examples a developer can implement directly.
-            """, "medium", ["get_client_brief", "list_deliverables", "save_deliverable"]),
+            """, "medium", ["get_client_brief", "list_deliverables", "run_code", "save_deliverable"]),
 
         ["content"] = new("content", Shared + """
 
             You are a content producer for articles, digests, social posts and video scripts. Write publish-ready
             pieces with headlines, structure and calls to action that fit each channel.
-            """, "medium", ["get_client_brief", "list_deliverables", "save_deliverable"]),
+            """, "medium", ["get_client_brief", "list_deliverables", "run_code", "save_deliverable"]),
 
         ["outreach"] = new("outreach", Shared + """
 

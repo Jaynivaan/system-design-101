@@ -79,6 +79,17 @@ public static class BuiltinSkills
         },
         new()
         {
+            Name = "verify-in-sandbox", Title = "Check your work in the sandbox", Roles = "techseo,analyst,seo,geo,content,strategist",
+            Triggers = "json-ld,schema,sitemap,xml,script,code,python,javascript,regex,csv,calculate,estimate,validate,data,url,hreflang", Version = 1,
+            Body = """
+                - If you have the run_code tool, use it to check anything checkable before saving: parse your JSON-LD/XML, run your script on a small sample, test regexes, recompute numbers.
+                - The sandbox has no internet: put the data you need in the program itself.
+                - Keep runs short and print only what you need. Fix what fails, then save the corrected version.
+                - Mention in the deliverable what you verified (e.g. "JSON-LD validated with a parser").
+                """,
+        },
+        new()
+        {
             Name = "planner-dag", Title = "Turning a plan into a task graph", Roles = "planner", Always = true, Version = 1,
             Body = """
                 - Create 6–15 tasks; each is one agent's job finishable in a single sitting with a concrete deliverable.

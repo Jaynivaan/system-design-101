@@ -670,8 +670,11 @@ document.addEventListener("change", async e => {
 // ───── Skills & learning ─────
 async function renderSkills() {
   try {
-    const skills = await api("/v1/skills");
-    $("#pane-skills").innerHTML = `<p class="muted" style="margin:0 0 10px;font-size:12px">Playbooks the agents follow to avoid known mistakes. Each job gets the skills that match its role and task. "Pass rate" = jobs using the skill that then passed the quality checks.</p>` +
+    const [skills, sb] = await Promise.all([api("/v1/skills"), api("/v1/sandbox").catch(() => null)]);
+    const sandboxLine = sb ? (sb.enabled
+      ? `<p style="margin:0 0 10px;font-size:12px"><span class="pill Done">Sandbox on</span> Agents can run Python/Node to check their work: no internet, ${sb.limits.memoryMb} MB, ${sb.limits.maxConcurrent} at once, ${sb.runsToday}/${sb.limits.dailyRunsPerTenant} runs today.</p>`
+      : `<p style="margin:0 0 10px;font-size:12px"><span class="pill">Sandbox off</span> Turn it on so agents can test their own code and structured data (see docs/SANDBOX.md).</p>`) : "";
+    $("#pane-skills").innerHTML = sandboxLine + `<p class="muted" style="margin:0 0 10px;font-size:12px">Playbooks the agents follow to avoid known mistakes. Each job gets the skills that match its role and task. "Pass rate" = jobs using the skill that then passed the quality checks.</p>` +
       skills.map(s => `<details class="skill"><summary><span><strong>${esc(s.title)}</strong> <span class="pill">${esc(s.source)}</span>${s.active ? "" : ' <span class="pill Failed">off</span>'}</span>
         <span class="muted mono" style="font-size:11px;white-space:nowrap">${s.uses} uses${s.passRate !== null ? ` · ${Math.round(s.passRate * 100)}% pass` : ""}</span></summary>
         <div class="md"><p class="muted" style="font-size:12px">Roles: ${esc(s.roles)}${s.always ? " · always on" : ` · used when the task mentions: ${esc(s.triggers)}`} · v${s.version}</p>${md(s.body)}

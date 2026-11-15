@@ -98,6 +98,18 @@ public static class SwarmEndpoints
             return Results.Accepted($"/v1/agendas/{id}");
         });
 
+        // ───── Sandbox status ─────
+        v1.MapGet("/sandbox", (HttpContext http, SandboxOptions o, IServiceProvider sp) =>
+        {
+            var guard = sp.GetService<SandboxGuard>();
+            return Results.Ok(new
+            {
+                mode = o.Mode, enabled = guard is not null, runsToday = guard?.RunsToday(http.Tenant().Id) ?? 0,
+                limits = new { o.DailyRunsPerTenant, o.MaxConcurrent, o.MemoryMb, o.Cpus, o.DefaultTimeoutSeconds, o.MaxTimeoutSeconds, network = "none" },
+                languages = o.Images.Keys, roles = o.Roles,
+            });
+        });
+
         // ───── Skills ─────
         v1.MapGet("/skills", async (HttpContext http, HarnessDbContext db) =>
         {

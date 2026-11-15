@@ -49,6 +49,19 @@ builder.Services.AddSingleton<IAgentTool, AddAgendaTaskTool>();
 builder.Services.AddSingleton<IAgentTool, ListAgendaTasksTool>();
 builder.Services.AddSingleton<IAgentTool, SubmitReviewTool>();
 builder.Services.AddSingleton<SkillsAndLessons>();
+
+// ---------- Sandboxes: agents run code to check their own work (no network, strict limits) ----------
+var sandboxOptions = cfg.GetSection("Harness:Sandbox").Get<SandboxOptions>() ?? new SandboxOptions();
+builder.Services.AddSingleton(sandboxOptions);
+if (sandboxOptions.Mode is "container" or "remote")
+{
+    builder.Services.AddHttpClient("sandbox");
+    builder.Services.AddSingleton<ISandbox>(sp => sandboxOptions.Mode == "container"
+        ? new ContainerSandbox(sandboxOptions)
+        : new RemoteSandbox(sp.GetRequiredService<IHttpClientFactory>().CreateClient("sandbox"), sandboxOptions));
+    builder.Services.AddSingleton<SandboxGuard>();
+    builder.Services.AddSingleton<IAgentTool, RunCodeTool>();
+}
 builder.Services.AddSingleton<QualityGate>();
 builder.Services.AddSingleton<ToolRegistry>();
 
