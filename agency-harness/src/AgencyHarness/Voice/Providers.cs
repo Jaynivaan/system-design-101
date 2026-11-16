@@ -232,9 +232,19 @@ public class HttpSttOptions
     public string LanguageProperty { get; set; } = "lang";
     public string ConfidenceProperty { get; set; } = "language_confidence";
     public string? ApiKey { get; set; }
+    /// <summary>"openai" mode: the Whisper model name, e.g. whisper-1, whisper-large-v3, Systran/faster-whisper-large-v3.</summary>
+    public string Model { get; set; } = "";
+    /// <summary>"openai" mode: send the call's current language as a hint. Off = Whisper detects the language itself,
+    /// which is what lets a caller switch between Malayalam and English mid-call.</summary>
+    public bool SendLanguageHint { get; set; } = false;
+    /// <summary>"openai" mode: segments Whisper itself thinks are probably not speech are dropped (stops it inventing
+    /// "Thank you for watching" from line noise).</summary>
+    public double MaxNoSpeechProb { get; set; } = 0.6;
 }
 
-/// <summary>Speech-to-text over HTTP: one WAV per utterance (works with IndicConformer, faster-whisper servers, etc.).</summary>
+/// <summary>Speech-to-text over HTTP: one WAV per utterance (works with IndicConformer, faster-whisper servers, etc.).
+/// Mode "openai" speaks the OpenAI /v1/audio/transcriptions API: OpenAI Whisper, Groq, speaches/faster-whisper-server,
+/// whisper.cpp server, LocalAI.</summary>
 public class HttpSpeechToText(HttpClient http, HttpSttOptions o) : ISpeechToText
 {
     public async Task<SttResult> TranscribeAsync(PcmAudio utterance, string? languageHint, CancellationToken ct)
@@ -242,6 +252,7 @@ public class HttpSpeechToText(HttpClient http, HttpSttOptions o) : ISpeechToText
         var wav = Wav.Write(new PcmAudio(Pcm.Resample(utterance.Samples, utterance.SampleRate, o.SampleRate), o.SampleRate));
         var lang = string.IsNullOrEmpty(languageHint) ? o.DefaultLanguage : languageHint;
         var url = o.BaseUrl.TrimEnd('/') + o.Path;
+        if (o.Mode == "openai") return await WhisperAsync(wav, lang, ct);
         HttpContent content;
         if (o.Mode == "raw")
         {
@@ -274,6 +285,54 @@ public class HttpSpeechToText(HttpClient http, HttpSttOptions o) : ISpeechToText
         var detected = Str(o.LanguageProperty);
         return new SttResult(Str(o.TextProperty).Trim(), string.IsNullOrEmpty(detected) ? null : detected, conf);
     }
+
+    private async Task<SttResult> WhisperAsync(byte[] wav, string lang, CancellationToken ct)
+    {
+        var path = o.Path == "/asr" ? "/v1/audio/transcriptions" : o.Path;
+        var form = new MultipartFormDataContent();
+        var file = new ByteArrayContent(wav);
+        file.Headers.ContentType = new MediaTypeHeaderValue("audio/wav");
+        form.Add(file, "file", "utterance.wav");
+        if (!string.IsNullOrEmpty(o.Model)) form.Add(new StringContent(o.Model), "model");
+        form.Add(new StringContent("verbose_json"), "response_format");
+        form.Add(new StringContent("0"), "temperature");
+        if (o.SendLanguageHint) form.Add(new StringContent(lang), "language");
+
+        using var req = new HttpRequestMessage(HttpMethod.Post, o.BaseUrl.TrimEnd('/') + path) { Content = form };
+        if (!string.IsNullOrEmpty(o.ApiKey)) req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", o.ApiKey);
+        HttpResponseMessage resp;
+        try { resp = await http.SendAsync(req, ct); }
+        catch (HttpRequestException e) { throw new ProviderUnavailableException("Whisper unreachable: " + e.Message, e); }
+        using var _ = resp;
+        if (!resp.IsSuccessStatusCode) throw new ProviderUnavailableException($"Whisper returned {(int)resp.StatusCode}.");
+
+        using var doc = JsonDocument.Parse(await resp.Content.ReadAsStringAsync(ct));
+        var root = doc.RootElement;
+        string text;
+        if (root.TryGetProperty("segments", out var segs) && segs.ValueKind == JsonValueKind.Array && segs.GetArrayLength() > 0)
+            text = string.Join(" ", segs.EnumerateArray()
+                .Where(sg => !(sg.TryGetProperty("no_speech_prob", out var p) && p.ValueKind == JsonValueKind.Number && p.GetDouble() > o.MaxNoSpeechProb))
+                .Select(sg => sg.TryGetProperty("text", out var t) ? t.GetString()?.Trim() : null)
+                .Where(t => !string.IsNullOrEmpty(t)));
+        else
+            text = root.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString()! : "";
+        var detected = root.TryGetProperty("language", out var l) && l.ValueKind == JsonValueKind.String ? WhisperLanguages.ToCode(l.GetString()!) : null;
+        return new SttResult(text.Trim(), detected, detected is null ? null : 0.9);
+    }
+}
+
+/// <summary>Whisper's verbose_json names languages ("malayalam"); the call engine uses codes ("ml").</summary>
+public static class WhisperLanguages
+{
+    private static readonly Dictionary<string, string> Names = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ["english"] = "en", ["french"] = "fr", ["malayalam"] = "ml", ["hindi"] = "hi", ["tamil"] = "ta", ["telugu"] = "te",
+        ["kannada"] = "kn", ["bengali"] = "bn", ["marathi"] = "mr", ["gujarati"] = "gu", ["punjabi"] = "pa", ["urdu"] = "ur",
+        ["spanish"] = "es", ["german"] = "de", ["arabic"] = "ar", ["chinese"] = "zh", ["portuguese"] = "pt", ["italian"] = "it",
+        ["tagalog"] = "tl", ["japanese"] = "ja", ["korean"] = "ko", ["russian"] = "ru",
+    };
+    public static string? ToCode(string name) =>
+        name.Length is 2 or 3 && !Names.ContainsKey(name) ? name.ToLowerInvariant() : Names.GetValueOrDefault(name.Trim());
 }
 
 /// <summary>Tries each speech-to-text provider in order (e.g. your local IndicConformer, then a cloud one).</summary>

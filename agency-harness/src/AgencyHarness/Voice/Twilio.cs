@@ -67,6 +67,8 @@ public class VoiceOptions
     /// <summary>Gemini speech-to-text (with language detection). Used first when set; your local STT becomes the fallback.</summary>
     public GeminiSttOptions? GeminiStt { get; set; }
     public IndicLidOptions? LanguageId { get; set; }
+    /// <summary>Which speech-to-text to try first: "gemini" (GeminiStt) and "http" (Stt, e.g. Whisper). Others are fallbacks.</summary>
+    public string[] SttOrder { get; set; } = ["gemini", "http"];
     public OpenAiSpeechOptions? LocalTts { get; set; }
     public GeminiTtsOptions? GeminiTts { get; set; }
     /// <summary>TTS chain per language: names are "local" and "gemini". "*" is the default.</summary>

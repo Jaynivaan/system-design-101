@@ -28,9 +28,11 @@ public static class VoiceSetup
             models.Add((new ClaudeResponseModel(new Anthropic.AnthropicClient(), o.ClaudeModel), Breaker()));
         IResponseModel model = new FallbackResponseModel(models, TimeSpan.FromMilliseconds(o.FirstTokenTimeoutMs), log);
 
-        var sttChain = new List<(ISpeechToText, CircuitBreaker)>();
-        if (o.GeminiStt is not null) sttChain.Add((new GeminiSpeechToText(http, o.GeminiStt), Breaker()));
-        if (o.Stt is { BaseUrl.Length: > 0 }) sttChain.Add((new HttpSpeechToText(http, o.Stt), Breaker()));
+        var sttEngines = new Dictionary<string, ISpeechToText>();
+        if (o.GeminiStt is not null) sttEngines["gemini"] = new GeminiSpeechToText(http, o.GeminiStt);
+        if (o.Stt is { BaseUrl.Length: > 0 }) sttEngines["http"] = new HttpSpeechToText(http, o.Stt);
+        var sttChain = o.SttOrder.Concat(["gemini", "http"]).Distinct().Where(sttEngines.ContainsKey)
+            .Select(n => (sttEngines[n], Breaker())).ToList();
         ISpeechToText stt = sttChain.Count > 0 ? new FallbackSpeechToText(sttChain) : new UnconfiguredStt();
 
         var engines = new Dictionary<string, ITextToSpeech>();

@@ -525,6 +525,30 @@ public class GeminiAdapterTests
     }
 
     [Fact]
+    public async Task Whisper_transcribes_detects_language_and_drops_invented_text_on_noise()
+    {
+        var stub = new Stub(_ => JsonSerializer.Serialize(new
+        {
+            language = "malayalam",
+            text = "എനിക്ക് ഒരു വെബ്സൈറ്റ് വേണം Thank you for watching",
+            segments = new object[]
+            {
+                new { text = " എനിക്ക് ഒരു വെബ്സൈറ്റ് വേണം", no_speech_prob = 0.05 },
+                new { text = " Thank you for watching", no_speech_prob = 0.92 },
+            },
+        }));
+        var stt = new HttpSpeechToText(new HttpClient(stub), new HttpSttOptions { BaseUrl = "http://whisper:8000", Mode = "openai", Model = "whisper-large-v3", ApiKey = "k" });
+        var r = await stt.TranscribeAsync(new PcmAudio(new short[8000], 8000), "en", default);
+        Assert.Equal("എനിക്ക് ഒരു വെബ്സൈറ്റ് വേണം", r.Text);
+        Assert.Equal("ml", r.Language);
+        Assert.Equal("/v1/audio/transcriptions", stub.Last!.RequestUri!.AbsolutePath);
+        Assert.Contains("whisper-large-v3", stub.LastBody);
+        Assert.Contains("verbose_json", stub.LastBody);
+        Assert.DoesNotContain("name=language", stub.LastBody);   // no hint: Whisper detects, so callers can switch language
+        Assert.Equal("Bearer", stub.Last.Headers.Authorization!.Scheme);
+    }
+
+    [Fact]
     public async Task Gemini_stt_returns_transcript_and_detected_language()
     {
         var inner = JsonSerializer.Serialize(new { lang = "ml", text = "എനിക്ക് ഒരു website വേണം" });

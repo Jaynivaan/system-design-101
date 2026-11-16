@@ -247,3 +247,29 @@ If the tunnel address changes, update both this webhook and `PublicBaseUrl`.
 
 On a Twilio **trial** account, callers first hear a short trial notice and must press a key, and
 outgoing calls can only go to numbers you've verified. Upgrading the account removes both limits.
+
+## Whisper for speech-to-text
+
+Any server with the OpenAI `/v1/audio/transcriptions` API works (Mode `openai`). Whisper detects the
+language itself, so a caller can move between Malayalam and English mid-call. Segments Whisper marks as
+probably-not-speech are dropped, which stops it inventing text such as "Thank you for watching" from line noise.
+
+**On your PC (free, private), with [speaches](https://github.com/speaches-ai/speaches):**
+
+```bash
+podman run -d --name whisper -p 8000:8000 ghcr.io/speaches-ai/speaches:latest-cpu   # :latest-cuda with an NVIDIA GPU
+```
+
+```env
+Harness__Voice__Stt__BaseUrl=http://host.containers.internal:8000
+Harness__Voice__Stt__Mode=openai
+Harness__Voice__Stt__Model=Systran/faster-whisper-large-v3     # on CPU, faster-whisper-small is much quicker
+Harness__Voice__SttOrder__0=http                               # Whisper first, Gemini as the fallback
+```
+
+**Hosted:** OpenAI (`BaseUrl=https://api.openai.com`, `Model=whisper-1`) or Groq
+(`BaseUrl=https://api.groq.com/openai`, `Model=whisper-large-v3-turbo`), with the key in
+`Harness__Voice__Stt__ApiKey`.
+
+Set `Harness__Voice__Stt__SendLanguageHint=true` to force the call's current language. That can help on
+short Malayalam phrases, but it stops Whisper from noticing a language switch.
