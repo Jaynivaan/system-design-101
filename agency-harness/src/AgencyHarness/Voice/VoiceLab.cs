@@ -33,7 +33,12 @@ public class VoicePreview(IHttpClientFactory http, VoiceOptions voice) : IVoiceP
             return new OpenAiSpeechTextToSpeech(client, o).SpeakAsync(text, language, style, ct);
         }
         var g = voice.GeminiTts ?? new GeminiTtsOptions();
-        var go = new GeminiTtsOptions { BaseUrl = g.BaseUrl, Model = g.Model, ApiKey = g.ApiKey, Voices = new(g.Voices) };
+        // Copy every setting (UseStyle, FallbackModels, …) so the lab sounds exactly like a live call; only the voice differs.
+        var go = new GeminiTtsOptions
+        {
+            BaseUrl = g.BaseUrl, Model = g.Model, ApiKey = g.ApiKey, Voices = new(g.Voices),
+            FallbackModels = g.FallbackModels.ToArray(), MaxRetryWaitMs = g.MaxRetryWaitMs, UseStyle = g.UseStyle,
+        };
         if (!string.IsNullOrEmpty(voiceName)) go.Voices = new() { ["*"] = voiceName };
         return new GeminiTextToSpeech(client, go).SpeakAsync(text, language, style, ct);
     }

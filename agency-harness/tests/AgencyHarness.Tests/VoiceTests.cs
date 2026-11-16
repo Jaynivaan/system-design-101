@@ -607,6 +607,24 @@ public class GeminiAdapterTests
     }
 
     [Fact]
+    public async Task Voice_lab_uses_the_same_gemini_settings_as_live_calls()
+    {
+        var bodies = new List<string>();
+        var stub = new Stub(r =>
+        {
+            bodies.Add(r.Content!.ReadAsStringAsync().Result);
+            return JsonSerializer.Serialize(new { candidates = new[] { new { content = new { parts = new[] { new { inlineData = new { mimeType = "audio/L16;rate=24000", data = Convert.ToBase64String(new byte[480]) } } } } } } });
+        });
+        var services = new ServiceCollection();
+        services.AddHttpClient("voice").ConfigurePrimaryHttpMessageHandler(() => stub);
+        var factory = services.BuildServiceProvider().GetRequiredService<IHttpClientFactory>();
+        var lab = new VoicePreview(factory, new VoiceOptions { GeminiTts = new GeminiTtsOptions { ApiKey = "k", UseStyle = false } });
+        await lab.SpeakAsync("gemini", "നമസ്കാരം", "ml", "Leda", "Say gently and calmly.", default);
+        Assert.DoesNotContain("gently", bodies.Single());
+        Assert.Contains("Leda", bodies.Single());
+    }
+
+    [Fact]
     public async Task Gemini_tts_retries_a_rate_limit_then_falls_back_to_another_model()
     {
         var pcm = new byte[4800];
