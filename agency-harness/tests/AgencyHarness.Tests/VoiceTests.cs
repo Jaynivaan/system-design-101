@@ -549,13 +549,14 @@ public class GeminiAdapterTests
     }
 
     [Fact]
-    public void Gemini_tts_keeps_the_style_apart_from_the_words_to_read()
+    public void Gemini_tts_style_is_one_short_lead_in_with_no_full_stop_before_the_colon()
     {
-        var p = GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", "Say gently and calmly.");
-        Assert.Contains("DIRECTOR'S NOTES: Say gently and calmly.\n", p);
-        Assert.EndsWith("TRANSCRIPT:\nനമസ്കാരം", p);
-        Assert.DoesNotContain(".:", p);
+        Assert.Equal("Say gently and calmly: നമസ്കാരം", GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", "Say gently and calmly."));
+        Assert.Equal("Say warmly: നമസ്കാരം", GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", " Say warmly: "));
         Assert.Equal("നമസ്കാരം", GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", null));
+        var p = GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", "Say gently.");
+        foreach (var meta in new[] { "transcript", "notes", "read", "instruction", ".:" })
+            Assert.DoesNotContain(meta, p, StringComparison.OrdinalIgnoreCase);   // nothing extra for the model to read aloud
     }
 
     [Fact]

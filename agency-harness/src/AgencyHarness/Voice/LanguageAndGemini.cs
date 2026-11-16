@@ -60,24 +60,24 @@ public class GeminiTtsOptions
     public string[] FallbackModels { get; set; } = [];
     /// <summary>Longest wait for a rate limit to clear before trying the next model.</summary>
     public int MaxRetryWaitMs { get; set; } = 1500;
+    /// <summary>Send the speaking style as a lead-in. Turn off if a model reads the style aloud.</summary>
+    public bool UseStyle { get; set; } = true;
 }
 
 /// <summary>
-/// Gemini text-to-speech (Malayalam and many more). Style and emotion are given in plain words as
-/// director's notes kept apart from the transcript, which is how emotional tone reaches the voice
-/// without the model reading the notes aloud.
+/// Gemini text-to-speech (Malayalam and many more). Style and emotion are given as one short lead-in
+/// ("Say gently: …"), which is how emotional tone reaches the voice.
 /// Returns raw 16-bit PCM; the rate is read from the response's mime type (24 kHz typically).
 /// </summary>
 public class GeminiTextToSpeech(HttpClient http, GeminiTtsOptions o) : ITextToSpeech
 {
-    /// <summary>"Say gently." + text, in a form the model treats as direction. The old "{style}: {text}" form broke
-    /// when the style ended in a full stop ("Say gently.: …"), and the model read the style aloud.</summary>
+    /// <summary>Gemini's documented form: one short lead-in clause, a colon, then the words ("Say gently: …").
+    /// The style must not end in a full stop ("Say gently.: …" gets read aloud), and long meta-instructions are
+    /// read aloud too, so nothing else is added.</summary>
     public static string BuildPrompt(string text, string? style)
     {
-        style = style?.Trim().TrimEnd('.', ':', ' ');
-        if (string.IsNullOrEmpty(style)) return text;
-        return "Read the transcript aloud. Speak only the words after TRANSCRIPT; never read these notes.\n"
-             + $"DIRECTOR'S NOTES: {style}.\n\nTRANSCRIPT:\n{text}";
+        style = style?.Trim().TrimEnd('.', ':', ';', ',', '!', ' ');
+        return string.IsNullOrEmpty(style) ? text : $"{style}: {text}";
     }
 
     public async Task<PcmAudio> SpeakAsync(string text, string language, string? style, CancellationToken ct)
@@ -85,7 +85,7 @@ public class GeminiTextToSpeech(HttpClient http, GeminiTtsOptions o) : ITextToSp
         var key = string.IsNullOrEmpty(o.ApiKey) ? Environment.GetEnvironmentVariable("GEMINI_API_KEY") : o.ApiKey;
         if (string.IsNullOrEmpty(key)) throw new ProviderUnavailableException("Gemini TTS has no API key (set GEMINI_API_KEY).");
         var voice = o.Voices.TryGetValue(language, out var v) ? v : o.Voices.GetValueOrDefault("*", "Kore");
-        var prompt = BuildPrompt(text, style);
+        var prompt = BuildPrompt(text, o.UseStyle ? style : null);
         var body = JsonSerializer.Serialize(new
         {
             contents = new[] { new { parts = new[] { new { text = prompt } } } },
