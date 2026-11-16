@@ -240,6 +240,41 @@ public class HttpSttOptions
     /// <summary>"openai" mode: segments Whisper itself thinks are probably not speech are dropped (stops it inventing
     /// "Thank you for watching" from line noise).</summary>
     public double MaxNoSpeechProb { get; set; } = 0.6;
+    /// <summary>"openai" mode: treat a transcript in the wrong writing system (e.g. Malayalam in Devanagari) as a miss,
+    /// so the next speech-to-text provider gets a chance. It's still used if nothing better comes back.</summary>
+    public bool RequireNativeScript { get; set; } = true;
+}
+
+/// <summary>A transcript came back in the wrong writing system. Carries it, in case nothing better is available.</summary>
+public class WrongScriptException(SttResult result, string language)
+    : ProviderUnavailableException($"Transcript isn't in the {language} script.")
+{
+    public SttResult Result { get; } = result;
+}
+
+public static class Scripts
+{
+    private static readonly Dictionary<string, (int From, int To)> Blocks = new()
+    {
+        ["ml"] = (0x0D00, 0x0D7F), ["hi"] = (0x0900, 0x097F), ["mr"] = (0x0900, 0x097F), ["ta"] = (0x0B80, 0x0BFF),
+        ["te"] = (0x0C00, 0x0C7F), ["kn"] = (0x0C80, 0x0CFF), ["bn"] = (0x0980, 0x09FF), ["gu"] = (0x0A80, 0x0AFF),
+        ["pa"] = (0x0A00, 0x0A7F),
+    };
+
+    /// <summary>True when at least half the letters are in the language's own script (or we don't know its script).
+    /// English words mixed into Malayalam are fine; a whole sentence in another script is not.</summary>
+    public static bool LooksNative(string text, string language)
+    {
+        if (!Blocks.TryGetValue(language, out var b)) return true;
+        int letters = 0, native = 0;
+        foreach (var ch in text)
+        {
+            if (!char.IsLetter(ch) && char.GetUnicodeCategory(ch) is not (System.Globalization.UnicodeCategory.NonSpacingMark or System.Globalization.UnicodeCategory.SpacingCombiningMark)) continue;
+            letters++;
+            if (ch >= b.From && ch <= b.To) native++;
+        }
+        return letters == 0 || native * 2 >= letters;
+    }
 }
 
 /// <summary>Speech-to-text over HTTP: one WAV per utterance (works with IndicConformer, faster-whisper servers, etc.).
@@ -317,7 +352,13 @@ public class HttpSpeechToText(HttpClient http, HttpSttOptions o) : ISpeechToText
         else
             text = root.TryGetProperty("text", out var t) && t.ValueKind == JsonValueKind.String ? t.GetString()! : "";
         var detected = root.TryGetProperty("language", out var l) && l.ValueKind == JsonValueKind.String ? WhisperLanguages.ToCode(l.GetString()!) : null;
-        return new SttResult(text.Trim(), detected, detected is null ? null : 0.9);
+        var result = new SttResult(text.Trim(), detected, detected is null ? null : 0.9);
+        // Whisper often writes Malayalam in Devanagari or Latin letters; the reply model and the transcript need the
+        // real script. Let the next provider try, and keep this as a last resort.
+        var expected = detected ?? (o.SendLanguageHint ? lang : null);
+        if (o.RequireNativeScript && expected is not null && !Scripts.LooksNative(result.Text, expected))
+            throw new WrongScriptException(result, expected);
+        return result;
     }
 }
 
@@ -340,13 +381,15 @@ public class FallbackSpeechToText(IReadOnlyList<(ISpeechToText Stt, CircuitBreak
 {
     public async Task<SttResult> TranscribeAsync(PcmAudio utterance, string? languageHint, CancellationToken ct)
     {
+        SttResult? lastResort = null;
         foreach (var (stt, breaker) in chain)
         {
             if (!breaker.TryAcquire()) continue;
             try { var r = await stt.TranscribeAsync(utterance, languageHint, ct); breaker.RecordSuccess(); return r; }
+            catch (WrongScriptException e) { breaker.RecordSuccess(); lastResort ??= e.Result; }   // it works, just not ideal
             catch (ProviderUnavailableException) { breaker.RecordFailure(); }
         }
-        throw new ProviderUnavailableException("No speech-to-text available.");
+        return lastResort ?? throw new ProviderUnavailableException("No speech-to-text available.");
     }
 }
 

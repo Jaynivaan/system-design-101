@@ -549,6 +549,39 @@ public class GeminiAdapterTests
     }
 
     [Fact]
+    public void Gemini_tts_keeps_the_style_apart_from_the_words_to_read()
+    {
+        var p = GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", "Say gently and calmly.");
+        Assert.Contains("DIRECTOR'S NOTES: Say gently and calmly.\n", p);
+        Assert.EndsWith("TRANSCRIPT:\nനമസ്കാരം", p);
+        Assert.DoesNotContain(".:", p);
+        Assert.Equal("നമസ്കാരം", GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", null));
+    }
+
+    [Fact]
+    public async Task Whisper_malayalam_in_the_wrong_script_lets_the_next_provider_answer_but_is_kept_as_a_last_resort()
+    {
+        var devanagari = new Stub(_ => JsonSerializer.Serialize(new { language = "malayalam", text = "आईयो! अबिरंधनंगल!" }));
+        var whisper = new HttpSpeechToText(new HttpClient(devanagari), new HttpSttOptions { BaseUrl = "http://w", Mode = "openai" });
+        var good = new FixedStt(new SttResult("അയ്യോ! അഭിനന്ദനങ്ങൾ!", "ml", 0.95));
+        CircuitBreaker B() => new(3, TimeSpan.FromSeconds(30), TimeProvider.System);
+        var audio = new PcmAudio(new short[8000], 8000);
+
+        var r = await new FallbackSpeechToText([(whisper, B()), (good, B())]).TranscribeAsync(audio, "ml", default);
+        Assert.Equal("അയ്യോ! അഭിനന്ദനങ്ങൾ!", r.Text);
+
+        var alone = await new FallbackSpeechToText([(whisper, B())]).TranscribeAsync(audio, "ml", default);
+        Assert.Equal("आईयो! अबिरंधनंगल!", alone.Text);   // better than hearing nothing
+        Assert.True(Scripts.LooksNative("എനിക്ക് ഒരു website വേണം", "ml"));
+        Assert.False(Scripts.LooksNative("Kshyamikyanam, buddhimuttu", "ml"));
+    }
+
+    private class FixedStt(SttResult r) : ISpeechToText
+    {
+        public Task<SttResult> TranscribeAsync(PcmAudio u, string? l, CancellationToken ct) => Task.FromResult(r);
+    }
+
+    [Fact]
     public async Task Gemini_stt_returns_transcript_and_detected_language()
     {
         var inner = JsonSerializer.Serialize(new { lang = "ml", text = "എനിക്ക് ഒരു website വേണം" });
@@ -613,7 +646,7 @@ public class GeminiAdapterTests
         Assert.Equal(24000, audio.SampleRate);
         Assert.Equal(pcm, audio.Samples);
         var sent = JsonDocument.Parse(stub.LastBody!).RootElement.GetProperty("contents")[0].GetProperty("parts")[0].GetProperty("text").GetString();
-        Assert.Equal("Say warmly: നമസ്കാരം", sent);
+        Assert.Equal(GeminiTextToSpeech.BuildPrompt("നമസ്കാരം", "Say warmly"), sent);
     }
 }
 

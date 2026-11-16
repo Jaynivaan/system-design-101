@@ -2,6 +2,7 @@
 # Build and run the Agency Harness with Podman on this machine (macOS / Linux / WSL).
 # Usage:  ./scripts/host.sh            build + (re)start on http://localhost:8080
 #         ./scripts/host.sh --tunnel   ...and open a public HTTPS address with Cloudflare
+#         HARNESS_NETWORKS=vaani ./scripts/host.sh   also join these networks (comma-separated), e.g. to reach Whisper
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -35,8 +36,15 @@ fi
 # 3. (Re)start the container. Data stays in the named volume across restarts and upgrades.
 "$CLI" volume inspect agency-harness-data >/dev/null 2>&1 || "$CLI" volume create agency-harness-data >/dev/null
 "$CLI" rm -f "$NAME" >/dev/null 2>&1 || true
+NET_ARGS=()
+if [ -n "${HARNESS_NETWORKS:-}" ]; then
+  # Keep the default network (for the published port) and add the others.
+  if [ "$CLI" = docker ]; then NET_ARGS=(--network bridge); else NET_ARGS=(--network podman); fi
+  IFS=, read -ra NETS <<< "$HARNESS_NETWORKS"
+  for n in "${NETS[@]}"; do NET_ARGS+=(--network "$n"); done
+fi
 "$CLI" run -d --name "$NAME" --restart=unless-stopped \
-  -p "$PORT:8080" -v agency-harness-data:/data --env-file "$ENV_FILE" "$IMAGE" >/dev/null
+  -p "$PORT:8080" -v agency-harness-data:/data --env-file "$ENV_FILE" ${NET_ARGS[@]+"${NET_ARGS[@]}"} "$IMAGE" >/dev/null
 
 printf "Starting"
 for _ in $(seq 1 40); do

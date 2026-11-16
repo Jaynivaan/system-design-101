@@ -2,12 +2,15 @@
 # Usage:  .\scripts\host.ps1            build + (re)start on http://localhost:8080
 #         .\scripts\host.ps1 -Tunnel    ...and open a public HTTPS address with Cloudflare
 #         .\scripts\host.ps1 -HostAddress 172.20.1.5   if the app isn't reachable on localhost
+#         .\scripts\host.ps1 -Networks vaani   also join the "vaani" network (e.g. to reach a Whisper container)
 # If localhost doesn't answer (e.g. WSL with localhostForwarding=false), the script finds the
 # Podman machine's WSL IP address and uses that for the health check and the tunnel.
 param([switch]$Tunnel, [switch]$SkipBuild, [int]$Port = 8080, [string]$Cli = "podman", [string]$Image = "agency-harness:latest",
       [string]$HostAddress = "localhost", [string]$MachineName = "podman-machine-default",
       # Path of the Podman API socket inside the Podman machine, to let agents run code in sandboxes (see docs/SANDBOX.md).
-      [string]$SandboxSocket = "")
+      [string]$SandboxSocket = "",
+      # Extra container networks to join, e.g. -Networks vaani for a Whisper container on the "vaani" network.
+      [string[]]$Networks = @())
 $ErrorActionPreference = "Stop"
 Set-Location (Split-Path $PSScriptRoot -Parent)
 $Name = "agency-harness"; $EnvFile = "harness.env"
@@ -83,7 +86,13 @@ if ($SandboxSocket) {
   $sandboxArgs = @("-v", "${SandboxSocket}:/run/podman.sock", "--security-opt", "label=disable",
                    "-e", "Harness__Sandbox__Mode=container", "-e", "Harness__Sandbox__Engine=unix:///run/podman.sock")
 }
-& $Cli run -d --name $Name --restart=unless-stopped -p "${Port}:8080" -v agency-harness-data:/data --env-file $EnvFile @sandboxArgs $Image | Out-Null
+$netArgs = @()
+if ($Networks.Count -gt 0) {
+  # Keep the default network (for the published port) and add the others.
+  $netArgs = @("--network", $(if ($Cli -eq "docker") { "bridge" } else { "podman" }))
+  foreach ($n in $Networks) { $netArgs += @("--network", $n) }
+}
+& $Cli run -d --name $Name --restart=unless-stopped -p "${Port}:8080" -v agency-harness-data:/data --env-file $EnvFile @netArgs @sandboxArgs $Image | Out-Null
 if ($LASTEXITCODE) { throw "Could not start the container." }
 
 Write-Host -NoNewline "Starting"

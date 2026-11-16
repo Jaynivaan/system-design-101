@@ -271,5 +271,24 @@ Harness__Voice__SttOrder__0=http                               # Whisper first, 
 (`BaseUrl=https://api.groq.com/openai`, `Model=whisper-large-v3-turbo`), with the key in
 `Harness__Voice__Stt__ApiKey`.
 
+**What we measured (RTX GPU, faster-whisper-large-v3):** stock Whisper is weak on Malayalam. It often writes
+it in Devanagari or Latin letters, and it can miss Malayalam mixed with English. Gemini was faster
+(1–2 s vs 2–5 s) and wrote real Malayalam script. So:
+
+- Keep **Gemini first** (`SttOrder` default) and Whisper as the free, no-quota fallback; or
+- Try a Malayalam fine-tune such as `rontroy/whisper-large-v3-malayalam-ct2` (CTranslate2, Apache-2.0) and
+  compare it on the Voice lab samples before putting it first.
+- A transcript in the wrong script is treated as a miss (`RequireNativeScript`, on by default): the next
+  provider is asked, and the Whisper text is used only if nothing better comes back.
+
+**Networking with rootless Podman:** the harness container may not reach a port published on the host.
+Put both containers on a user network and pass it to the host script so it survives rebuilds:
+
+```powershell
+podman network create vaani
+podman run -d --name whisper --network vaani ...   # then Stt__BaseUrl=http://whisper:8000
+.\scripts\host.ps1 -Networks vaani                 # bash: HARNESS_NETWORKS=vaani ./scripts/host.sh
+```
+
 Set `Harness__Voice__Stt__SendLanguageHint=true` to force the call's current language. That can help on
 short Malayalam phrases, but it stops Whisper from noticing a language switch.

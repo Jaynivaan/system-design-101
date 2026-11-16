@@ -63,18 +63,29 @@ public class GeminiTtsOptions
 }
 
 /// <summary>
-/// Gemini text-to-speech (Malayalam and many more). Style and emotion are given in plain words
-/// ("Say warmly and calmly: …"), which is how emotional tone reaches the voice.
+/// Gemini text-to-speech (Malayalam and many more). Style and emotion are given in plain words as
+/// director's notes kept apart from the transcript, which is how emotional tone reaches the voice
+/// without the model reading the notes aloud.
 /// Returns raw 16-bit PCM; the rate is read from the response's mime type (24 kHz typically).
 /// </summary>
 public class GeminiTextToSpeech(HttpClient http, GeminiTtsOptions o) : ITextToSpeech
 {
+    /// <summary>"Say gently." + text, in a form the model treats as direction. The old "{style}: {text}" form broke
+    /// when the style ended in a full stop ("Say gently.: …"), and the model read the style aloud.</summary>
+    public static string BuildPrompt(string text, string? style)
+    {
+        style = style?.Trim().TrimEnd('.', ':', ' ');
+        if (string.IsNullOrEmpty(style)) return text;
+        return "Read the transcript aloud. Speak only the words after TRANSCRIPT; never read these notes.\n"
+             + $"DIRECTOR'S NOTES: {style}.\n\nTRANSCRIPT:\n{text}";
+    }
+
     public async Task<PcmAudio> SpeakAsync(string text, string language, string? style, CancellationToken ct)
     {
         var key = string.IsNullOrEmpty(o.ApiKey) ? Environment.GetEnvironmentVariable("GEMINI_API_KEY") : o.ApiKey;
         if (string.IsNullOrEmpty(key)) throw new ProviderUnavailableException("Gemini TTS has no API key (set GEMINI_API_KEY).");
         var voice = o.Voices.TryGetValue(language, out var v) ? v : o.Voices.GetValueOrDefault("*", "Kore");
-        var prompt = string.IsNullOrEmpty(style) ? text : $"{style}: {text}";
+        var prompt = BuildPrompt(text, style);
         var body = JsonSerializer.Serialize(new
         {
             contents = new[] { new { parts = new[] { new { text = prompt } } } },
